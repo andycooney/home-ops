@@ -45,7 +45,7 @@ nodes:
           ip: "192.168.42.20"
   - hostname: "talos02"
     ipAddress: "192.168.42.12"
-    installDisk: "/dev/nvme0n1"
+    installDisk: "/dev/nvme1n1"
     machineSpec:
       secureboot: false
     talosImageURL: factory.talos.dev/installer/039535a70c3bd1667c355eca78571267704e55c8a24785033d183b8f26e39d82
