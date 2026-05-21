@@ -13,13 +13,16 @@ spec:
     fullnameOverride: *app
     provider:
       name: webhook
+      extraArgs:
+        - --webhook-provider-read-timeout=30s
+        - --webhook-provider-write-timeout=30s
       webhook:
         image:
           repository: ghcr.io/kashalls/external-dns-unifi-webhook
           tag: v0.8.2@sha256:7f0ddbbc83a36a2a9d762e25eef9cafcb3adf0493068a27d72ae71087eafe6f0
         env:
           - name: UNIFI_HOST
-            value: https://udm.cooney.site
+            value: https://172.16.1.1
           - name: UNIFI_API_KEY
             valueFrom:
               secretKeyRef:
