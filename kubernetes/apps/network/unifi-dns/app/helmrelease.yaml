@@ -40,6 +40,7 @@ spec:
     triggerLoopOnEvent: true
     policy: sync
     sources:
+      - crd
       - gateway-httproute
       - service
     txtOwnerId: main
