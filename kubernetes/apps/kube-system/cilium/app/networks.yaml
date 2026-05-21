@@ -40,12 +40,12 @@ metadata:
 spec:
   advertisements:
     - advertisementType: Service
+      selector:
+        matchLabels:
+          bgp.cilium.io/advertise: "true"
       service:
         addresses:
           - LoadBalancerIP
-        selector:
-          matchLabels:
-            bgp.cilium.io/advertise: "true"
 ---
 apiVersion: cilium.io/v2
 kind: CiliumBGPPeerConfig
