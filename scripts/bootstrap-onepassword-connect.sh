@@ -9,7 +9,7 @@ command -v op >/dev/null || { echo "Missing required command: op"; exit 1; }
 command -v kubectl >/dev/null || { echo "Missing required command: kubectl"; exit 1; }
 
 echo "Ensuring namespace exists: ${NAMESPACE}"
-kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+kubectl get namespace "${NAMESPACE}" >/dev/null 2>&1 || kubectl create namespace "${NAMESPACE}"
 
 echo "Creating/updating onepassword-connect-credentials-secret from 1Password"
 op read "${OP_CONNECT_FILE_REF}" | kubectl -n "${NAMESPACE}" create secret generic onepassword-connect-credentials-secret \
