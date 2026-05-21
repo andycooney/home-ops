@@ -19,3 +19,9 @@ talosconfig
 .DS_Store
 Thumbs.db
 .envrc
+
+# Local cluster access/config files
+talos/clusterconfig/
+.envrc
+cluster.toml
+cloudflare-tunnel.json
