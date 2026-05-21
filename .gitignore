@@ -25,3 +25,8 @@ talos/clusterconfig/
 .envrc
 cluster.toml
 cloudflare-tunnel.json
+
+# 1Password Connect bootstrap material
+1password-credentials.json
+*1password*credentials*.json
+op-connect-token*
