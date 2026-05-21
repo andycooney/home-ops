@@ -50,9 +50,11 @@ metadata:
 spec:
   gatewayClassName: envoy
   infrastructure:
+    labels:
+      bgp.cilium.io/advertise: "true"
     annotations:
       external-dns.alpha.kubernetes.io/hostname: external.${SECRET_DOMAIN}
-      lbipam.cilium.io/ips: "192.168.42.52"
+      lbipam.cilium.io/ips: "192.168.60.2"
   listeners:
     - name: http
       protocol: HTTP
@@ -80,9 +82,11 @@ metadata:
 spec:
   gatewayClassName: envoy
   infrastructure:
+    labels:
+      bgp.cilium.io/advertise: "true"
     annotations:
       external-dns.alpha.kubernetes.io/hostname: internal.${SECRET_DOMAIN}
-      lbipam.cilium.io/ips: "192.168.42.50"
+      lbipam.cilium.io/ips: "192.168.60.1"
   listeners:
     - name: http
       protocol: HTTP

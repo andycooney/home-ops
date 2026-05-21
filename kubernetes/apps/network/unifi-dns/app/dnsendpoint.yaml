@@ -8,7 +8,7 @@ spec:
     - dnsName: internal.cooney.site
       recordType: A
       targets:
-        - 192.168.42.50
+        - 192.168.60.1
     - dnsName: echo.cooney.site
       recordType: CNAME
       targets:
