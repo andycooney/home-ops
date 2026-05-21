@@ -96,7 +96,7 @@ spec:
       repository:
         type: nfs
         server: storage.cooney.site
-        path: /backups/home-ops-backups
+        path: /home-ops-backups
         globalMounts:
           - path: /repository
       tmpfs:
