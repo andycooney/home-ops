@@ -43,6 +43,9 @@ spec:
       service:
         addresses:
           - LoadBalancerIP
+        selector:
+          matchLabels:
+            bgp.cilium.io/advertise: "true"
 ---
 apiVersion: cilium.io/v2
 kind: CiliumBGPPeerConfig
