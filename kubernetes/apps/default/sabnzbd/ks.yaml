@@ -1,5 +1,3 @@
-
-
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -25,4 +23,3 @@ spec:
       APP: sabnzbd
       VOLSYNC_CLAIM: sabnzbd
       VOLSYNC_SECRET_KEY: sabnzbd
-      VOLSYNC_SECRET_PROPERTY: SABNZBD_VOLSYNC
