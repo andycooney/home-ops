@@ -71,7 +71,7 @@ spec:
       tls:
         certificateRefs:
           - kind: Secret
-            name: ${SECRET_DOMAIN/./-}-production-tls
+            name: cooney-site-production-tls
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway

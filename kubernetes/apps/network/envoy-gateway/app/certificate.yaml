@@ -16,3 +16,21 @@ spec:
   secretName: "${SECRET_DOMAIN/./-}-production-tls"
   usages:
     - digital signature
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: cooney-site-production
+spec:
+  dnsNames:
+    - cooney.site
+    - "*.cooney.site"
+  duration: 160h
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  privateKey:
+    algorithm: ECDSA
+  secretName: cooney-site-production-tls
+  usages:
+    - digital signature
