@@ -30,7 +30,7 @@ spec:
       localpv:
         image:
           registry: quay.io/
-        basePath: &hostPath /var/mnt/local-hostpath
+        basePath: &hostPath /var/lib/kubelet/openebs/local
       hostpathClass:
         enabled: true
         name: openebs-hostpath
