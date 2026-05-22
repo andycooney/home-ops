@@ -9,11 +9,3 @@ spec:
       recordType: A
       targets:
         - 192.168.60.1
-    - dnsName: echo.cooney.site
-      recordType: CNAME
-      targets:
-        - internal.cooney.site
-    - dnsName: flux-webhook.cooney.site
-      recordType: CNAME
-      targets:
-        - internal.cooney.site
