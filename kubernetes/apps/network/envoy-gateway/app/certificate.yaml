@@ -2,35 +2,35 @@
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: "${SECRET_DOMAIN/./-}-production"
+  name: "${EXTERNAL_DOMAIN/./-}-production"
 spec:
   dnsNames:
-    - "${SECRET_DOMAIN}"
-    - "*.${SECRET_DOMAIN}"
+    - "${EXTERNAL_DOMAIN}"
+    - "*.${EXTERNAL_DOMAIN}"
   duration: 160h
   issuerRef:
     name: letsencrypt-production
     kind: ClusterIssuer
   privateKey:
     algorithm: ECDSA
-  secretName: "${SECRET_DOMAIN/./-}-production-tls"
+  secretName: "${EXTERNAL_DOMAIN/./-}-production-tls"
   usages:
     - digital signature
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: cooney-site-production
+  name: "${INTERNAL_DOMAIN/./-}-production"
 spec:
   dnsNames:
-    - cooney.site
-    - "*.cooney.site"
+    - "${INTERNAL_DOMAIN}"
+    - "*.${INTERNAL_DOMAIN}"
   duration: 160h
   issuerRef:
     name: letsencrypt-production
     kind: ClusterIssuer
   privateKey:
     algorithm: ECDSA
-  secretName: cooney-site-production-tls
+  secretName: "${INTERNAL_DOMAIN/./-}-production-tls"
   usages:
     - digital signature

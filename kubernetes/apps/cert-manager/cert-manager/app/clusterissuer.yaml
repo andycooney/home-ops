@@ -17,5 +17,5 @@ spec:
               key: api-token
         selector:
           dnsZones:
-            - "${SECRET_DOMAIN}"
-            - cooney.site
+            - "${EXTERNAL_DOMAIN}"
+            - "${INTERNAL_DOMAIN}"

@@ -46,14 +46,14 @@ kind: Gateway
 metadata:
   name: envoy-external
   annotations:
-    external-dns.alpha.kubernetes.io/target: external.${SECRET_DOMAIN}
+    external-dns.alpha.kubernetes.io/target: external.${EXTERNAL_DOMAIN}
 spec:
   gatewayClassName: envoy
   infrastructure:
     labels:
       bgp.cilium.io/advertise: "true"
     annotations:
-      external-dns.alpha.kubernetes.io/hostname: external.${SECRET_DOMAIN}
+      external-dns.alpha.kubernetes.io/hostname: external.${EXTERNAL_DOMAIN}
       lbipam.cilium.io/ips: "192.168.60.2"
   listeners:
     - name: http
@@ -71,21 +71,21 @@ spec:
       tls:
         certificateRefs:
           - kind: Secret
-            name: ${SECRET_DOMAIN/./-}-production-tls
+            name: ${EXTERNAL_DOMAIN/./-}-production-tls
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: envoy-internal
   annotations:
-    external-dns.alpha.kubernetes.io/target: internal.cooney.site
+    external-dns.alpha.kubernetes.io/target: internal.${INTERNAL_DOMAIN}
 spec:
   gatewayClassName: envoy
   infrastructure:
     labels:
       bgp.cilium.io/advertise: "true"
     annotations:
-      external-dns.alpha.kubernetes.io/hostname: internal.cooney.site
+      external-dns.alpha.kubernetes.io/hostname: internal.${INTERNAL_DOMAIN}
       lbipam.cilium.io/ips: "192.168.60.1"
   listeners:
     - name: http
@@ -103,7 +103,7 @@ spec:
       tls:
         certificateRefs:
           - kind: Secret
-            name: cooney-site-production-tls
+            name: ${INTERNAL_DOMAIN/./-}-production-tls
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: BackendTrafficPolicy
