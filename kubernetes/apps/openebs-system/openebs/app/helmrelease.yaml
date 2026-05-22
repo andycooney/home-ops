@@ -25,8 +25,17 @@ spec:
         mayastor:
           enabled: false
     localpv-provisioner:
+      analytics:
+        enabled: false
+      localpv:
+        image:
+          registry: quay.io/
+        basePath: &hostPath /var/mnt/local-hostpath
       hostpathClass:
         enabled: true
         name: openebs-hostpath
         isDefaultClass: false
-        basePath: /var/openebs/local
+        basePath: *hostPath
+      helperPod:
+        image:
+          registry: quay.io/
