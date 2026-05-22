@@ -10,3 +10,4 @@ resources:
   - ./network
   - ./rook-ceph
   - ./volsync-system
+  - ./openebs-system
