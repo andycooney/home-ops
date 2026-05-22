@@ -78,14 +78,14 @@ kind: Gateway
 metadata:
   name: envoy-internal
   annotations:
-    external-dns.alpha.kubernetes.io/target: internal.${SECRET_DOMAIN}
+    external-dns.alpha.kubernetes.io/target: internal.cooney.site
 spec:
   gatewayClassName: envoy
   infrastructure:
     labels:
       bgp.cilium.io/advertise: "true"
     annotations:
-      external-dns.alpha.kubernetes.io/hostname: internal.${SECRET_DOMAIN}
+      external-dns.alpha.kubernetes.io/hostname: internal.cooney.site
       lbipam.cilium.io/ips: "192.168.60.1"
   listeners:
     - name: http
