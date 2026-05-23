@@ -8,6 +8,8 @@ spec:
   dependsOn:
     - name: rook-ceph-cluster
       namespace: rook-ceph
+    - name: grafana-operator
+      namespace: o11y
   interval: 1h
   path: ./kubernetes/apps/o11y/kube-prometheus-stack/app
   prune: true
