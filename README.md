@@ -114,6 +114,7 @@ export OP_SERVICE_ACCOUNT_TOKEN="$(op read 'op://kubernetes/onepass_principal/cr
 
 If rebuilding from a new workstation, make sure the 1Password CLI is authenticated and this token can be read before attempting bootstrap.
 
+
 ## Secrets model
 
 The cluster now uses External Secrets for shared cluster variables:
@@ -153,6 +154,97 @@ default
 flux-system
 kube-system
 network
+```
+
+## Storage model
+
+The cluster currently uses multiple storage backends for different purposes.
+
+### Rook/Ceph block storage
+
+Most persistent application PVCs should use the Rook/Ceph block storage class:
+
+```text
+ceph-block
+```
+
+For example, the observability stack stores its persistent data on `ceph-block`:
+
+```text
+alertmanager-kube-prometheus-stack-db-alertmanager-kube-prometheus-stack-0   1Gi   ceph-block
+prometheus-kube-prometheus-stack-db-prometheus-kube-prometheus-stack-0       50Gi  ceph-block
+grafana-pvc                                                                  5Gi   ceph-block
+```
+
+These volumes are provisioned by the Rook/Ceph RBD CSI driver and are not stored directly on a Talos node filesystem path.
+
+Useful checks:
+
+```sh
+kubectl get pvc -A
+kubectl -n rook-ceph get cephcluster
+kubectl -n rook-ceph get cephblockpool
+```
+
+### OpenEBS hostpath storage
+
+OpenEBS hostpath storage is available for workloads that intentionally need local-node hostpath storage, scratch space, or cache-style PVCs.
+
+On this Talos cluster, OpenEBS hostpath must use a kubelet-visible base path:
+
+```text
+/var/lib/kubelet/openebs/local
+```
+
+Do not use these older paths on this cluster:
+
+```text
+/var/openebs/local
+/var/mnt/local-hostpath
+```
+
+Those paths may exist on the Talos host, but they are not reliably visible from inside Talos' containerized kubelet root filesystem.
+
+Useful checks:
+
+```sh
+kubectl get storageclass
+kubectl -n openebs-system get pods
+kubectl get pvc -A | grep openebs
+```
+
+### VolSync / Kopia backups
+
+VolSync backups are written to a Kopia filesystem repository backed by the QNAP NFS export:
+
+```text
+storage.cooney.site:/home-ops-backups
+```
+
+Each protected app should have its own repository directory:
+
+```text
+/home-ops-backups/<app>
+```
+
+Inside VolSync mover pods, the NFS export is mounted at:
+
+```text
+/mnt/repository
+```
+
+The per-app Kopia repository URL is stored in the app's 1Password item as:
+
+```text
+KOPIA_REPOSITORY = filesystem:///mnt/repository/<app>
+```
+
+Useful checks:
+
+```sh
+kubectl get replicationsource -A
+kubectl get replicationdestination -A
+kubectl get externalsecret -A | grep volsync
 ```
 
 ## Remaining SOPS usage
