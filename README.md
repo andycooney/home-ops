@@ -24,11 +24,16 @@ Internal-only:
 
 - `https://kopia.cooney.site`
 - `https://rook.cooney.site`
+- `https://sabnzbd.cooney.site`
 
 External:
 
 - `https://echo.cooney.online`
 - `https://flux-webhook.cooney.online`
+
+Known external application notes:
+
+- `https://sabnzbd.cooney.online` reaches the external Envoy Gateway, but SABnzbd currently blocks public internet access with `External internet access denied`. Do not treat this as a known-good external URL until Cloudflare Access and SABnzbd exposure settings are intentionally configured.
 
 ## Domain model
 
@@ -339,6 +344,68 @@ envoy-internal -> internal.cooney.site -> cooney-site-production-tls
 envoy-external -> external.cooney.online -> cooney-online-production-tls
 ```
 
+### Cilium BGP / UDM routing
+
+Cilium advertises Envoy Gateway LoadBalancer VIPs to the UniFi Dream Machine using BGP.
+
+Expected VIPs:
+
+```text
+envoy-internal -> 192.168.60.1
+envoy-external -> 192.168.60.2
+```
+
+Verify the Gateway services:
+
+```sh
+kubectl -n network get svc envoy-internal envoy-external -o wide
+kubectl -n network get gateway envoy-internal envoy-external -o wide
+```
+
+Verify Cilium BGP peers:
+
+```sh
+cilium bgp peers
+```
+
+Expected peer state:
+
+```text
+talos01/talos02/talos03 -> 172.16.1.1 established
+Advertised = 2
+```
+
+On the UDM, verify received prefixes and installed routes:
+
+```sh
+vtysh -c "show bgp summary"
+vtysh -c "show bgp ipv4 unicast"
+vtysh -c "show ip route bgp"
+```
+
+Expected UDM routes:
+
+```text
+B>* 192.168.60.1/32 via 192.168.42.11, br200
+  *                    via 192.168.42.12, br200
+  *                    via 192.168.42.13, br200
+B>* 192.168.60.2/32 via 192.168.42.11, br200
+  *                    via 192.168.42.12, br200
+  *                    via 192.168.42.13, br200
+```
+
+If BGP peers are established but `State/PfxRcd` is `0`, reload/check the UDM FRR configuration. The inbound route-map must allow the Cilium LoadBalancer pool:
+
+```text
+192.168.60.0/24 le 32
+```
+
+Useful FRR config file:
+
+```text
+kubernetes/apps/kube-system/cilium/app/udm-frr-bgp.conf
+```
+
 ### Routes
 
 ```sh
@@ -352,6 +419,8 @@ echo                  echo.cooney.online
 github-webhook        flux-webhook.cooney.online
 rook-ceph-dashboard   rook.cooney.site
 kopia                 kopia.cooney.site
+sabnzbd-internal      sabnzbd.cooney.site
+sabnzbd-external      sabnzbd.cooney.online
 ```
 
 ### DNS
@@ -362,6 +431,7 @@ Internal DNS:
 dig internal.cooney.site +short
 dig kopia.cooney.site +short
 dig rook.cooney.site +short
+dig sabnzbd.cooney.site +short
 ```
 
 Expected:
@@ -370,6 +440,7 @@ Expected:
 internal.cooney.site -> 192.168.60.1
 kopia.cooney.site -> internal.cooney.site
 rook.cooney.site -> internal.cooney.site
+sabnzbd.cooney.site -> internal.cooney.site
 ```
 
 External DNS:
@@ -378,6 +449,7 @@ External DNS:
 dig external.cooney.online +short
 dig echo.cooney.online +short
 dig flux-webhook.cooney.online +short
+dig sabnzbd.cooney.online +short
 ```
 
 Expected:
@@ -386,6 +458,7 @@ Expected:
 external.cooney.online -> Cloudflare Tunnel / external gateway target
 echo.cooney.online -> external.cooney.online
 flux-webhook.cooney.online -> external.cooney.online
+sabnzbd.cooney.online -> external.cooney.online
 ```
 
 ### HTTP/HTTPS checks
@@ -395,6 +468,8 @@ curl -I http://kopia.cooney.site
 curl -Ik https://kopia.cooney.site
 curl -I http://rook.cooney.site
 curl -Ik https://rook.cooney.site
+curl -I http://sabnzbd.cooney.site
+curl -Ik https://sabnzbd.cooney.site
 ```
 
 Expected:
@@ -403,6 +478,46 @@ Expected:
 HTTP  -> 301 redirect to HTTPS
 HTTPS -> 200 or app-specific success response
 ```
+
+For SABnzbd, a successful internal response may be an app-specific redirect such as:
+
+```text
+HTTP 303 -> /sabnzbd/wizard/
+```
+## SABnzbd notes
+
+SABnzbd is currently validated internally at:
+
+```text
+https://sabnzbd.cooney.site
+```
+
+Known-good internal behavior:
+
+```text
+HTTP 303 -> /sabnzbd/wizard/
+```
+
+The external route and external Envoy Gateway are functional when bypassing Cloudflare and targeting the external Gateway VIP directly:
+
+```sh
+curl -vk --resolve sabnzbd.cooney.online:443:192.168.60.2 https://sabnzbd.cooney.online
+```
+
+Expected direct-to-gateway response:
+
+```text
+HTTP 303 -> /sabnzbd/wizard/
+```
+
+The Cloudflare-proxied external URL currently reaches SABnzbd, but SABnzbd denies public internet access:
+
+```text
+External internet access denied - https://sabnzbd.org/access-denied
+```
+
+Do not expose SABnzbd externally without an intentional access-control layer such as Cloudflare Access and reviewed SABnzbd exposure settings.
+
 
 ## Kopia recovery notes
 
@@ -475,6 +590,7 @@ Useful restore points may include:
 ```text
 post-internal-dns-tls-routing
 post-onepassword-cluster-vars
+post-udm-cilium-bgp-routing
 ```
 
 List tags:
@@ -495,6 +611,7 @@ git push origin <tag-name>
 - Do not manually create app DNS records unless using a temporary break-glass workaround.
 - Do not point `cooney.site` records at the external gateway.
 - Do not point `cooney.online` records at the internal gateway.
+- Do not expose SABnzbd externally without Cloudflare Access or another intentional authentication layer.
 - Do not delete SOPS bootstrap files unless the bootstrap process has been fully moved to 1Password.
 - Do not reset Talos nodes unless you are intentionally rebuilding the cluster.
 
@@ -510,4 +627,12 @@ flux get hr -A
 kubectl get certificate -A
 kubectl get httproute -A
 kubectl get externalsecret -A
+cilium bgp peers
+```
+
+On the UDM, also verify:
+
+```sh
+vtysh -c "show bgp summary"
+vtysh -c "show ip route bgp"
 ```
