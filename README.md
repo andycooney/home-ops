@@ -25,6 +25,9 @@ Internal-only:
 - `https://kopia.cooney.site`
 - `https://rook.cooney.site`
 - `https://sabnzbd.cooney.site`
+- `https://grafana.cooney.site`
+- `https://prometheus.cooney.site`
+- `https://alertmanager.cooney.site`
 
 External:
 
@@ -156,6 +159,34 @@ kube-system
 network
 ```
 
+### Flux webhook secret
+
+The GitHub webhook signing secret is sourced from 1Password instead of SOPS.
+
+Vault: `Kubernetes`
+Item: `flux`
+Field:
+
+```text
+GITHUB_WEBHOOK_TOKEN
+```
+
+The ExternalSecret creates:
+
+```text
+flux-system/github-webhook-token-secret
+```
+
+The Flux Receiver uses that Secret to validate GitHub webhook signatures.
+
+Verify:
+
+```sh
+kubectl -n flux-system get externalsecret github-webhook-token
+kubectl -n flux-system get secret github-webhook-token-secret
+kubectl -n flux-system get receiver github-webhook
+```
+
 ## Storage model
 
 The cluster currently uses multiple storage backends for different purposes.
@@ -263,8 +294,19 @@ Known historical files may include:
 talos/talsecret.sops.yaml
 bootstrap/github-deploy-key.sops.yaml
 bootstrap/sops-age.sops.yaml
-kubernetes/apps/flux-system/flux-instance/app/secret.sops.yaml
 kubernetes/apps/network/cloudflare-tunnel/app/secret.sops.yaml
+```
+
+The Flux GitHub webhook token was moved from:
+
+```text
+kubernetes/apps/flux-system/flux-instance/app/secret.sops.yaml
+```
+
+to the `flux` 1Password item field:
+
+```text
+GITHUB_WEBHOOK_TOKEN
 ```
 
 The old `kubernetes/components/sops/cluster-secrets.sops.yaml` should not be used for domain substitution anymore.
@@ -352,6 +394,36 @@ Force Flux to fetch the latest repo state:
 
 ```sh
 flux reconcile source git flux-system -n flux-system
+```
+
+GitHub push webhooks should normally trigger Flux reconciliation automatically.
+
+Webhook URL:
+
+```text
+https://flux-webhook.cooney.online/hook/<receiver-webhook-path>
+```
+
+Get the live receiver path:
+
+```sh
+kubectl -n flux-system get receiver github-webhook -o jsonpath='{.status.webhookPath}' && echo
+```
+
+The GitHub webhook should be configured with:
+
+```text
+Content type: application/json
+Events: push
+SSL verification: enabled
+Secret: value from flux-system/github-webhook-token-secret
+```
+
+Get the webhook secret value for GitHub:
+
+```sh
+kubectl -n flux-system get secret github-webhook-token-secret \
+  -o jsonpath='{.data.token}' | base64 -d && echo
 ```
 
 List all Flux Kustomizations:
@@ -507,12 +579,15 @@ kubectl get httproute -A
 Expected notable routes:
 
 ```text
-echo                  echo.cooney.online
-github-webhook        flux-webhook.cooney.online
-rook-ceph-dashboard   rook.cooney.site
-kopia                 kopia.cooney.site
-sabnzbd-internal      sabnzbd.cooney.site
-sabnzbd-external      sabnzbd.cooney.online
+echo                                echo.cooney.online
+github-webhook                      flux-webhook.cooney.online
+rook-ceph-dashboard                 rook.cooney.site
+kopia                               kopia.cooney.site
+sabnzbd-internal                    sabnzbd.cooney.site
+sabnzbd-external                    sabnzbd.cooney.online
+grafana-httproute                   grafana.cooney.site
+kube-prometheus-stack-prometheus    prometheus.cooney.site
+kube-prometheus-stack-alertmanager  alertmanager.cooney.site
 ```
 
 ### DNS
@@ -524,6 +599,9 @@ dig internal.cooney.site +short
 dig kopia.cooney.site +short
 dig rook.cooney.site +short
 dig sabnzbd.cooney.site +short
+dig grafana.cooney.site +short
+dig prometheus.cooney.site +short
+dig alertmanager.cooney.site +short
 ```
 
 Expected:
@@ -533,6 +611,9 @@ internal.cooney.site -> 192.168.60.1
 kopia.cooney.site -> internal.cooney.site
 rook.cooney.site -> internal.cooney.site
 sabnzbd.cooney.site -> internal.cooney.site
+grafana.cooney.site -> internal.cooney.site
+prometheus.cooney.site -> internal.cooney.site
+alertmanager.cooney.site -> internal.cooney.site
 ```
 
 External DNS:
@@ -562,6 +643,9 @@ curl -I http://rook.cooney.site
 curl -Ik https://rook.cooney.site
 curl -I http://sabnzbd.cooney.site
 curl -Ik https://sabnzbd.cooney.site
+curl -Ik https://grafana.cooney.site
+curl -kL https://prometheus.cooney.site/-/ready
+curl -kL https://alertmanager.cooney.site/-/ready
 ```
 
 Expected:
@@ -575,6 +659,84 @@ For SABnzbd, a successful internal response may be an app-specific redirect such
 
 ```text
 HTTP 303 -> /sabnzbd/wizard/
+```
+
+## Observability notes
+
+The observability baseline lives under:
+
+```text
+kubernetes/apps/o11y
+```
+
+Current baseline components:
+
+```text
+blackbox-exporter-lan
+grafana-operator
+grafana-instance
+kube-prometheus-stack
+prometheus-adapter
+```
+
+Validated internal URLs:
+
+```text
+https://grafana.cooney.site
+https://prometheus.cooney.site
+https://alertmanager.cooney.site
+```
+
+Expected live checks:
+
+```sh
+flux get ks -A | grep -E "o11y|blackbox|grafana|prometheus|alert"
+flux get hr -n o11y
+kubectl -n o11y get pods -o wide
+kubectl -n o11y get httproute
+kubectl -n o11y get servicemonitor,podmonitor,scrapeconfig,probe
+```
+
+Expected core pods:
+
+```text
+alertmanager-kube-prometheus-stack-0              2/2 Running
+blackbox-exporter-lan                             1/1 Running
+grafana-deployment                                1/1 Running
+grafana-operator                                  1/1 Running
+kube-prometheus-stack-operator                    1/1 Running
+kube-state-metrics                                1/1 Running
+node-exporter                                     3/3 Running
+prometheus-adapter                                1/1 Running
+prometheus-kube-prometheus-stack-0                2/2 Running
+```
+
+Grafana should return `HTTP/2 200` at:
+
+```text
+https://grafana.cooney.site
+```
+
+Prometheus and Alertmanager may return `HTTP/2 405` to `HEAD` requests. Use GET readiness endpoints instead:
+
+```sh
+curl -kL https://prometheus.cooney.site/-/ready
+curl -kL https://alertmanager.cooney.site/-/ready
+```
+
+Baseline scrape/probe targets:
+
+```text
+homebase.cooney.site:9100
+storage.cooney.site
+storage.cooney.site:2049
+```
+
+Prometheus memory was reduced for this base cluster. Current expected values:
+
+```text
+requests: cpu=100m, memory=512Mi
+limits: memory=1000Mi
 ```
 ## SABnzbd notes
 
@@ -683,6 +845,8 @@ Useful restore points may include:
 post-internal-dns-tls-routing
 post-onepassword-cluster-vars
 post-udm-cilium-bgp-routing
+post-observability-baseline
+post-observability-and-webhook-baseline
 ```
 
 List tags:
@@ -714,11 +878,14 @@ Run this when you think recovery is complete:
 ```sh
 kubectl get nodes -o wide
 kubectl get pods -A
+flux get sources git -A
 flux get ks -A
 flux get hr -A
 kubectl get certificate -A
 kubectl get httproute -A
 kubectl get externalsecret -A
+kubectl -n o11y get pods -o wide
+kubectl -n o11y get servicemonitor,podmonitor,scrapeconfig,probe
 cilium bgp peers
 ```
 
@@ -727,4 +894,12 @@ On the UDM, also verify:
 ```sh
 vtysh -c "show bgp summary"
 vtysh -c "show ip route bgp"
+```
+
+Webhook reconciliation check:
+
+```sh
+kubectl -n flux-system get receiver github-webhook
+kubectl -n flux-system get externalsecret github-webhook-token
+kubectl -n flux-system get secret github-webhook-token-secret
 ```
