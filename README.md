@@ -18,6 +18,10 @@ This README is focused on **resurrecting the environment** if the cluster needs 
   - `unifi-dns` manages internal `cooney.site` records in UniFi.
   - `cloudflare-dns` manages external `cooney.online` records in Cloudflare.
 
+- Intel GPU DRA support is installed through `intel-gpu-resource-driver`.
+- Talos nodes expose an IoT VLAN link on `eno1.777` for future Multus-attached workloads.
+- Talos nodes do not have routable IP addresses on the IoT VLAN.
+
 ## Important URLs
 
 Internal-only:
@@ -361,6 +365,68 @@ Current node resolver target should be the internal network resolver:
 172.16.1.1
 ```
 
+Current Talos network patch creates VLAN 777 on the primary node NIC:
+
+```text
+parent interface: eno1
+VLAN interface:   eno1.777
+VLAN ID:          777
+Purpose:          IoT network for future Multus/Home Assistant workloads
+```
+
+The VLAN interface is intentionally created without DHCP or static IPv4 addressing. Talos/Kubernetes should not be reachable from the IoT VLAN through this interface.
+
+Expected Talos patch:
+
+```yaml
+machine:
+  network:
+    interfaces:
+      - interface: eno1
+        vlans:
+          - vlanId: 777
+            dhcp: false
+```
+
+Regenerate generated Talos configs after editing patches:
+
+```sh
+just -f talos/mod.just generate-config
+```
+
+Verify the generated configs include VLAN 777:
+
+```sh
+grep -R "vlanId: 777\|interface: eno1" -n talos/clusterconfig
+```
+
+Apply updated config to each node:
+
+```sh
+just -f talos/mod.just apply-node 192.168.42.11
+just -f talos/mod.just apply-node 192.168.42.12
+just -f talos/mod.just apply-node 192.168.42.13
+```
+
+Validate the live Talos VLAN links:
+
+```sh
+for node in talos01.cooney.site talos02.cooney.site talos03.cooney.site; do
+  echo "===== $node ====="
+  talosctl -n "$node" get links | grep -E "eno1($|[[:space:]])|eno1\.777"
+  talosctl -n "$node" get addresses | grep eno1.777 || true
+done
+```
+
+Expected:
+
+```text
+eno1      up true
+eno1.777  up true
+```
+
+The only expected address on `eno1.777` is an IPv6 link-local `fe80::/64` address. There should be no routable IPv4 address on VLAN 777.
+
 ### 2. Bootstrap Talos if needed
 
 Only do this when rebuilding from bare nodes or after a full reset.
@@ -662,6 +728,89 @@ HTTP 303 -> /sabnzbd/wizard/
 ```
 
 ## Observability notes
+## Kube-system platform notes
+
+### Intel GPU resource driver
+
+Intel GPU DRA support is installed under:
+
+```text
+kubernetes/apps/kube-system/intel-gpu-resource-driver
+```
+
+This is useful for future workloads that can use Intel Quick Sync / iGPU acceleration, such as media or camera workloads.
+
+Validated hardware exposure on each Talos node:
+
+```text
+/dev/dri/card0
+/dev/dri/renderD128
+```
+
+Validate the Flux and Helm resources:
+
+```sh
+flux get ks intel-gpu-resource-driver -n kube-system
+flux get hr intel-gpu-resource-driver -n kube-system
+kubectl -n kube-system get pods | grep -i intel
+```
+
+Expected:
+
+```text
+intel-gpu-resource-driver                          Ready=True
+intel-gpu-resource-driver-kubelet-plugin           3/3 pods Running
+```
+
+This driver uses Kubernetes Dynamic Resource Allocation rather than the older device-plugin allocatable-resource pattern. GPU availability is published through `ResourceSlice` objects, not classic node allocatable keys.
+
+Validate DRA resources:
+
+```sh
+kubectl api-resources | grep -i resource
+kubectl get resourceslices
+kubectl describe resourceslice <slice-name>
+```
+
+Expected ResourceSlice characteristics:
+
+```text
+Driver: gpu.intel.com
+Driver attribute: i915
+Pci Address: 0000:00:02.0
+Sriov: false
+```
+
+Current expected resource slices:
+
+```text
+talos01 -> gpu.intel.com -> i915 -> 0000:00:02.0
+talos02 -> gpu.intel.com -> i915 -> 0000:00:02.0
+talos03 -> gpu.intel.com -> i915 -> 0000:00:02.0
+```
+
+### Multus / IoT VLAN preparation
+
+Multus is planned for workloads that need a secondary interface on the IoT VLAN, especially Home Assistant.
+
+Current network preparation:
+
+```text
+IoT VLAN: 777
+Talos parent NIC: eno1
+Talos VLAN link: eno1.777
+Talos IPv4 on IoT VLAN: none
+```
+
+This allows future Multus `NetworkAttachmentDefinition` resources to attach selected pods to the IoT VLAN while keeping the Talos host itself off that routed network.
+
+The future IoT NetworkAttachmentDefinition should use the prepared VLAN interface:
+
+```text
+eno1.777
+```
+
+Do not attach general workloads to the IoT VLAN. Only workloads that intentionally need L2/multicast access to IoT devices should receive this secondary interface.
 
 The observability baseline lives under:
 
@@ -847,6 +996,7 @@ post-onepassword-cluster-vars
 post-udm-cilium-bgp-routing
 post-observability-baseline
 post-observability-and-webhook-baseline
+post-intel-gpu-and-iot-vlan-prep
 ```
 
 List tags:
@@ -886,6 +1036,8 @@ kubectl get httproute -A
 kubectl get externalsecret -A
 kubectl -n o11y get pods -o wide
 kubectl -n o11y get servicemonitor,podmonitor,scrapeconfig,probe
+kubectl -n kube-system get pods | grep -E "reloader|spegel|intel"
+kubectl get resourceslices
 cilium bgp peers
 ```
 
@@ -903,3 +1055,15 @@ kubectl -n flux-system get receiver github-webhook
 kubectl -n flux-system get externalsecret github-webhook-token
 kubectl -n flux-system get secret github-webhook-token-secret
 ```
+
+Talos VLAN 777 check:
+
+```sh
+for node in talos01.cooney.site talos02.cooney.site talos03.cooney.site; do
+  echo "===== $node ====="
+  talosctl -n "$node" get links | grep -E "eno1($|[[:space:]])|eno1\.777"
+  talosctl -n "$node" get addresses | grep eno1.777 || true
+done
+```
+
+Expected: `eno1.777` exists on all three nodes and has no routable IPv4 address.

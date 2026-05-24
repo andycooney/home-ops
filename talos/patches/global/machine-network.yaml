@@ -3,3 +3,8 @@ machine:
     disableSearchDomain: true
     nameservers:
       - 172.16.1.1
+    interfaces:
+      - interface: eno1
+        vlans:
+          - vlanId: 777
+            dhcp: false
