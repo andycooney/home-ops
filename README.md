@@ -17,8 +17,8 @@ This README is focused on **resurrecting the environment** if the cluster needs 
 - External-DNS manages DNS records:
   - `unifi-dns` manages internal `cooney.site` records in UniFi.
   - `cloudflare-dns` manages external `cooney.online` records in Cloudflare.
-
 - Intel GPU DRA support is installed through `intel-gpu-resource-driver`.
+- Multus is installed for selected workloads that need a secondary interface.
 - Talos nodes expose an IoT VLAN link on `eno1.777` for future Multus-attached workloads.
 - Talos nodes do not have routable IP addresses on the IoT VLAN.
 
@@ -120,7 +120,6 @@ export OP_SERVICE_ACCOUNT_TOKEN="$(op read 'op://kubernetes/onepass_principal/cr
 ```
 
 If rebuilding from a new workstation, make sure the 1Password CLI is authenticated and this token can be read before attempting bootstrap.
-
 
 ## Secrets model
 
@@ -656,6 +655,12 @@ kube-prometheus-stack-prometheus    prometheus.cooney.site
 kube-prometheus-stack-alertmanager  alertmanager.cooney.site
 ```
 
+Multus IoT is not an HTTPRoute. It is represented by:
+
+```text
+kube-system/iot                    NetworkAttachmentDefinition
+```
+
 ### DNS
 
 Internal DNS:
@@ -727,7 +732,6 @@ For SABnzbd, a successful internal response may be an app-specific redirect such
 HTTP 303 -> /sabnzbd/wizard/
 ```
 
-## Observability notes
 ## Kube-system platform notes
 
 ### Intel GPU resource driver
@@ -791,26 +795,58 @@ talos03 -> gpu.intel.com -> i915 -> 0000:00:02.0
 
 ### Multus / IoT VLAN preparation
 
-Multus is planned for workloads that need a secondary interface on the IoT VLAN, especially Home Assistant.
+Multus is installed for workloads that need a secondary interface on the IoT VLAN, especially Home Assistant.
 
 Current network preparation:
 
 ```text
 IoT VLAN: 777
+IoT subnet: 192.168.70.0/24
+IoT gateway: 192.168.70.1
 Talos parent NIC: eno1
 Talos VLAN link: eno1.777
 Talos IPv4 on IoT VLAN: none
 ```
 
-This allows future Multus `NetworkAttachmentDefinition` resources to attach selected pods to the IoT VLAN while keeping the Talos host itself off that routed network.
+This allows selected pods to attach directly to the IoT VLAN while keeping the Talos host itself off that routed network.
 
-The future IoT NetworkAttachmentDefinition should use the prepared VLAN interface:
+The live IoT `NetworkAttachmentDefinition` is:
+
+```text
+kube-system/iot
+```
+
+It uses the prepared VLAN interface:
 
 ```text
 eno1.777
 ```
 
+Validate Multus and the IoT network attachment:
+
+```sh
+flux get ks multus multus-networks -n kube-system
+flux get hr multus -n kube-system
+kubectl -n kube-system get pods | grep -i multus
+kubectl get network-attachment-definitions -A
+kubectl -n kube-system get network-attachment-definition iot -o yaml
+```
+
+Expected:
+
+```text
+multus             Ready=True
+multus-networks    Ready=True
+multus             HelmRelease Ready=True
+multus DaemonSet   3/3 pods Running
+kube-system/iot    NetworkAttachmentDefinition
+```
+
 Do not attach general workloads to the IoT VLAN. Only workloads that intentionally need L2/multicast access to IoT devices should receive this secondary interface.
+
+Home Assistant should eventually use this network attachment with a static IoT VLAN IP outside the UniFi DHCP range.
+
+## Observability notes
 
 The observability baseline lives under:
 
@@ -887,6 +923,7 @@ Prometheus memory was reduced for this base cluster. Current expected values:
 requests: cpu=100m, memory=512Mi
 limits: memory=1000Mi
 ```
+
 ## SABnzbd notes
 
 SABnzbd is currently validated internally at:
@@ -920,7 +957,6 @@ External internet access denied - https://sabnzbd.org/access-denied
 ```
 
 Do not expose SABnzbd externally without an intentional access-control layer such as Cloudflare Access and reviewed SABnzbd exposure settings.
-
 
 ## Kopia recovery notes
 
@@ -996,7 +1032,7 @@ post-onepassword-cluster-vars
 post-udm-cilium-bgp-routing
 post-observability-baseline
 post-observability-and-webhook-baseline
-post-intel-gpu-and-iot-vlan-prep
+post-intel-gpu-and-multus-iot-baseline
 ```
 
 List tags:
@@ -1036,8 +1072,9 @@ kubectl get httproute -A
 kubectl get externalsecret -A
 kubectl -n o11y get pods -o wide
 kubectl -n o11y get servicemonitor,podmonitor,scrapeconfig,probe
-kubectl -n kube-system get pods | grep -E "reloader|spegel|intel"
+kubectl -n kube-system get pods | grep -E "reloader|spegel|intel|multus"
 kubectl get resourceslices
+kubectl get network-attachment-definitions -A
 cilium bgp peers
 ```
 
@@ -1067,3 +1104,14 @@ done
 ```
 
 Expected: `eno1.777` exists on all three nodes and has no routable IPv4 address.
+
+Multus IoT check:
+
+```sh
+flux get ks multus multus-networks -n kube-system
+flux get hr multus -n kube-system
+kubectl -n kube-system get pods | grep -i multus
+kubectl get network-attachment-definitions -A
+```
+
+Expected: `multus` and `multus-networks` are Ready, three Multus pods are Running, and `kube-system/iot` exists.
