@@ -11,5 +11,6 @@ resources:
   - ./o11y
   - ./openebs-system
   - ./rook-ceph
-  - ./volsync-system
   - ./system-upgrade
+  - ./actions-runner-system
+  - ./volsync-system
