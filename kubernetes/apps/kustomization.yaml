@@ -12,3 +12,4 @@ resources:
   - ./openebs-system
   - ./rook-ceph
   - ./volsync-system
+  - ./system-upgrade
