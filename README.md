@@ -19,8 +19,11 @@ This README is focused on **resurrecting the environment** if the cluster needs 
   - `cloudflare-dns` manages external `cooney.online` records in Cloudflare.
 - Intel GPU DRA support is installed through `intel-gpu-resource-driver`.
 - Multus is installed for selected workloads that need a secondary interface.
-- Talos nodes expose an IoT VLAN link on `eno1.777` for future Multus-attached workloads.
+- Talos nodes expose an IoT VLAN link on `eno1.777` for Multus-attached workloads such as Home Assistant.
 - Talos nodes do not have routable IP addresses on the IoT VLAN.
+- Production TLS certificate secrets are backed up to 1Password with External Secrets `PushSecret` resources.
+- Tuppr is installed as the system upgrade controller, but the actual Talos/Kubernetes upgrade resources are suspended for manual enablement.
+- A scoped GitHub Actions Runner Controller scale set is installed for `andycooney/home-ops` with scale-to-zero behavior.
 
 ## Important URLs
 
@@ -121,6 +124,47 @@ export OP_SERVICE_ACCOUNT_TOKEN="$(op read 'op://kubernetes/onepass_principal/cr
 
 If rebuilding from a new workstation, make sure the 1Password CLI is authenticated and this token can be read before attempting bootstrap.
 
+### Flux webhook secret
+
+Vault: `Kubernetes`
+Item: `flux`
+Field:
+
+```text
+GITHUB_WEBHOOK_TOKEN
+```
+
+The ExternalSecret creates:
+
+```text
+flux-system/github-webhook-token-secret
+```
+
+The Flux Receiver uses that Secret to validate GitHub webhook signatures.
+
+Verify:
+
+```sh
+kubectl -n flux-system get externalsecret github-webhook-token
+kubectl -n flux-system get secret github-webhook-token-secret
+kubectl -n flux-system get receiver github-webhook
+```
+
+### GitHub Actions runner app
+
+Vault: `Kubernetes`
+Item: `actions-runner`
+
+Required fields:
+
+```text
+ACTIONS_RUNNER_APP_ID
+ACTIONS_RUNNER_INSTALLATION_ID
+ACTIONS_RUNNER_PRIVATE_KEY
+```
+
+These values back the GitHub App used by GitHub Actions Runner Controller for the `andycooney/home-ops` repository.
+
 ## Secrets model
 
 The cluster now uses External Secrets for shared cluster variables:
@@ -160,34 +204,6 @@ default
 flux-system
 kube-system
 network
-```
-
-### Flux webhook secret
-
-The GitHub webhook signing secret is sourced from 1Password instead of SOPS.
-
-Vault: `Kubernetes`
-Item: `flux`
-Field:
-
-```text
-GITHUB_WEBHOOK_TOKEN
-```
-
-The ExternalSecret creates:
-
-```text
-flux-system/github-webhook-token-secret
-```
-
-The Flux Receiver uses that Secret to validate GitHub webhook signatures.
-
-Verify:
-
-```sh
-kubectl -n flux-system get externalsecret github-webhook-token
-kubectl -n flux-system get secret github-webhook-token-secret
-kubectl -n flux-system get receiver github-webhook
 ```
 
 ## Storage model
@@ -370,12 +386,12 @@ Current Talos network patch creates VLAN 777 on the primary node NIC:
 parent interface: eno1
 VLAN interface:   eno1.777
 VLAN ID:          777
-Purpose:          IoT network for future Multus/Home Assistant workloads
+Purpose:          IoT network for Multus/Home Assistant workloads
 ```
 
 The VLAN interface is intentionally created without DHCP or static IPv4 addressing. Talos/Kubernetes should not be reachable from the IoT VLAN through this interface.
 
-Expected Talos patch:
+Expected Talos network patch:
 
 ```yaml
 machine:
@@ -387,16 +403,32 @@ machine:
             dhcp: false
 ```
 
+Current Talos feature patch enables Kubernetes Talos API access for the system upgrade controller:
+
+```yaml
+machine:
+  features:
+    kubernetesTalosAPIAccess:
+      enabled: true
+      allowedRoles:
+        - os:admin
+      allowedKubernetesNamespaces:
+        - system-upgrade
+```
+
+Do not add additional namespaces to `allowedKubernetesNamespaces` unless a workload intentionally needs Talos API access.
+
 Regenerate generated Talos configs after editing patches:
 
 ```sh
 just -f talos/mod.just generate-config
 ```
 
-Verify the generated configs include VLAN 777:
+Verify the generated configs include VLAN 777 and Talos API access:
 
 ```sh
 grep -R "vlanId: 777\|interface: eno1" -n talos/clusterconfig
+grep -R "kubernetesTalosAPIAccess\|allowedKubernetesNamespaces\|allowedRoles\|system-upgrade" -n talos/clusterconfig
 ```
 
 Apply updated config to each node:
@@ -426,6 +458,19 @@ eno1.777  up true
 
 The only expected address on `eno1.777` is an IPv6 link-local `fe80::/64` address. There should be no routable IPv4 address on VLAN 777.
 
+Validate Talos API access is exposed to Kubernetes:
+
+```sh
+kubectl api-resources | grep -i talos
+```
+
+Expected:
+
+```text
+serviceaccounts   tsa   talos.dev/v1alpha1
+talosupgrades           tuppr.home-operations.com/v1alpha1
+```
+
 ### 2. Bootstrap Talos if needed
 
 Only do this when rebuilding from bare nodes or after a full reset.
@@ -437,8 +482,8 @@ just bootstrap talos
 If applying updated Talos config to existing nodes instead of rebuilding:
 
 ```sh
-just talos generate-config
-just talos apply-node <node-ip>
+just -f talos/mod.just generate-config
+just -f talos/mod.just apply-node <node-ip>
 ```
 
 ### 3. Bootstrap Flux/apps
@@ -846,6 +891,195 @@ Do not attach general workloads to the IoT VLAN. Only workloads that intentional
 
 Home Assistant should eventually use this network attachment with a static IoT VLAN IP outside the UniFi DHCP range.
 
+## Network platform notes
+
+### TLS certificate backup to 1Password
+
+Existing cert-manager managed TLS secrets are backed up to 1Password using External Secrets `PushSecret` resources.
+
+Active export path:
+
+```text
+kubernetes/apps/network/certificates/export
+```
+
+The active Flux Kustomization is:
+
+```text
+network/certificates-export
+```
+
+Current exported certificate secrets:
+
+```text
+network/cooney-online-production-tls -> 1Password item cooney-online-production-tls
+network/cooney-site-production-tls   -> 1Password item cooney-site-production-tls
+```
+
+Normal operation keeps cert-manager as the source of truth. When cert-manager renews a live Kubernetes TLS secret, the `PushSecret` should update the matching 1Password item.
+
+Validate:
+
+```sh
+flux get ks certificates-export -n network
+kubectl -n network get pushsecret
+kubectl -n network describe pushsecret cooney-online-production-tls
+kubectl -n network describe pushsecret cooney-site-production-tls
+op item get cooney-online-production-tls --vault kubernetes
+op item get cooney-site-production-tls --vault kubernetes
+```
+
+Expected:
+
+```text
+certificates-export Ready=True
+cooney-online-production-tls Synced
+cooney-site-production-tls Synced
+```
+
+Recovery-only import manifests are kept under:
+
+```text
+kubernetes/apps/network/certificates/import
+```
+
+They are intentionally not referenced by the active `certificates-export` Kustomization. Use them only during recovery if cert-manager/DNS validation is unavailable and the TLS secrets need to be restored from 1Password.
+
+## Platform automation notes
+
+### System upgrade controller
+
+Tuppr is installed under:
+
+```text
+kubernetes/apps/system-upgrade
+```
+
+Talos Kubernetes API access is enabled for the `system-upgrade` namespace so Tuppr can create its Talos service account:
+
+```yaml
+machine:
+  features:
+    kubernetesTalosAPIAccess:
+      enabled: true
+      allowedRoles:
+        - os:admin
+      allowedKubernetesNamespaces:
+        - system-upgrade
+```
+
+The controller is active, but the upgrade definitions are intentionally suspended:
+
+```text
+system-upgrade/tuppr            active
+system-upgrade/tuppr-upgrades   suspended
+```
+
+Validate:
+
+```sh
+kubectl api-resources | grep -i talos
+flux get ks -A | grep -E "system-upgrade|tuppr"
+flux get hr -n system-upgrade
+kubectl -n system-upgrade get pods
+kubectl -n system-upgrade get serviceaccount.talos.dev
+kubectl -n system-upgrade get kubernetesupgrades,talosupgrades
+```
+
+Expected:
+
+```text
+serviceaccounts.talos.dev exists
+tuppr Ready=True
+tuppr-upgrades Suspended=True
+tuppr HelmRelease Ready=True
+no KubernetesUpgrade or TalosUpgrade resources are applied while suspended
+```
+
+Manual enablement options for a future controlled upgrade:
+
+```sh
+flux resume ks tuppr-upgrades -n system-upgrade
+```
+
+or remove `suspend: true` from:
+
+```text
+kubernetes/apps/system-upgrade/tuppr/ks.yaml
+```
+
+Do not enable `tuppr-upgrades` casually. It includes Talos/Kubernetes upgrade resources and Talos `rebootMode: powercycle` behavior.
+
+### GitHub Actions runner
+
+A scoped GitHub Actions Runner Controller deployment is installed under:
+
+```text
+kubernetes/apps/actions-runner-system
+```
+
+The runner scale set is configured for this repo only:
+
+```text
+https://github.com/andycooney/home-ops
+```
+
+Current security posture:
+
+```text
+minRunners: 0
+maxRunners: 1
+no cluster-admin ClusterRoleBinding
+no Talos os:admin ServiceAccount
+no /var/run/secrets/talos.dev mount
+```
+
+The GitHub App credentials are stored in 1Password:
+
+```text
+vault: kubernetes
+item: actions-runner
+fields:
+  ACTIONS_RUNNER_APP_ID
+  ACTIONS_RUNNER_INSTALLATION_ID
+  ACTIONS_RUNNER_PRIVATE_KEY
+```
+
+Validate controller and runner state:
+
+```sh
+flux get ks -A | grep -E "actions-runner|runner"
+flux get hr -n actions-runner-system
+kubectl -n actions-runner-system get externalsecret
+kubectl -n actions-runner-system get pods
+kubectl -n actions-runner-system get autoscalingrunnersets,autoscalinglisteners,ephemeralrunnersets
+```
+
+Expected baseline:
+
+```text
+actions-runner-controller Ready=True
+actions-runner-controller-runners Ready=True
+home-ops-runner ExternalSecret SecretSynced=True
+home-ops-runner HelmRelease Ready=True
+controller pod Running
+listener pod Running
+autoscaling runner set min 0 / max 1
+ephemeral runner set current replicas 0
+```
+
+A smoke-test workflow exists at:
+
+```text
+.github/workflows/test-self-hosted-runner.yaml
+```
+
+Run it manually from GitHub Actions to verify the runner can scale up, complete a job, and clean itself up. The expected pod lifecycle is:
+
+```text
+Pending -> ContainerCreating -> Running -> Completed -> Terminating -> removed
+```
+
 ## Observability notes
 
 The observability baseline lives under:
@@ -966,10 +1200,16 @@ Kopia uses an NFS-backed filesystem repository mounted from:
 storage.cooney.site:/home-ops-backups
 ```
 
-The repository path inside the pod is:
+The repository path inside the Kopia UI pod is:
 
 ```text
 /repository
+```
+
+VolSync mover pods use:
+
+```text
+/mnt/repository
 ```
 
 If Kopia fails with:
@@ -1033,6 +1273,7 @@ post-udm-cilium-bgp-routing
 post-observability-baseline
 post-observability-and-webhook-baseline
 post-intel-gpu-and-multus-iot-baseline
+post-cert-backup-tuppr-actions-runner-baseline
 ```
 
 List tags:
@@ -1056,6 +1297,8 @@ git push origin <tag-name>
 - Do not expose SABnzbd externally without Cloudflare Access or another intentional authentication layer.
 - Do not delete SOPS bootstrap files unless the bootstrap process has been fully moved to 1Password.
 - Do not reset Talos nodes unless you are intentionally rebuilding the cluster.
+- Do not enable `tuppr-upgrades` unless intentionally performing a controlled Talos/Kubernetes upgrade.
+- Do not give the GitHub Actions runner cluster-admin or Talos `os:admin` unless intentionally creating a separate privileged maintenance runner.
 
 ## Quick health snapshot
 
@@ -1075,6 +1318,12 @@ kubectl -n o11y get servicemonitor,podmonitor,scrapeconfig,probe
 kubectl -n kube-system get pods | grep -E "reloader|spegel|intel|multus"
 kubectl get resourceslices
 kubectl get network-attachment-definitions -A
+kubectl -n network get pushsecret
+flux get ks -A | grep -E "system-upgrade|tuppr|actions-runner|runner"
+kubectl -n system-upgrade get pods
+kubectl -n system-upgrade get kubernetesupgrades,talosupgrades
+kubectl -n actions-runner-system get pods
+kubectl -n actions-runner-system get autoscalingrunnersets,autoscalinglisteners,ephemeralrunnersets
 cilium bgp peers
 ```
 
@@ -1115,3 +1364,35 @@ kubectl get network-attachment-definitions -A
 ```
 
 Expected: `multus` and `multus-networks` are Ready, three Multus pods are Running, and `kube-system/iot` exists.
+
+Certificate backup check:
+
+```sh
+flux get ks certificates-export -n network
+kubectl -n network get pushsecret
+```
+
+Expected: `certificates-export` is Ready and both certificate PushSecrets are synced.
+
+System upgrade controller check:
+
+```sh
+flux get ks -A | grep -E "system-upgrade|tuppr"
+flux get hr -n system-upgrade
+kubectl -n system-upgrade get pods
+kubectl -n system-upgrade get kubernetesupgrades,talosupgrades
+```
+
+Expected: Tuppr is Ready, `tuppr-upgrades` is suspended, and no upgrade resources are applied.
+
+Actions runner check:
+
+```sh
+flux get ks -A | grep -E "actions-runner|runner"
+flux get hr -n actions-runner-system
+kubectl -n actions-runner-system get externalsecret
+kubectl -n actions-runner-system get pods
+kubectl -n actions-runner-system get autoscalingrunnersets,autoscalinglisteners,ephemeralrunnersets
+```
+
+Expected: controller/listener are Running, ExternalSecret is synced, max runners is 1, and current ephemeral runner replicas are 0 when no workflow is queued.
