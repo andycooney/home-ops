@@ -15,3 +15,4 @@ resources:
   - ./spegel/ks.yaml
   - ./snapshot-controller/ks.yaml
   - ./intel-gpu-resource-driver/ks.yaml
+  - ./multus/ks.yaml
