@@ -19,7 +19,10 @@ default:
 log lvl msg *args:
     gum log -t rfc3339 -s -l "{{ lvl }}" "{{ msg }}" {{ args }}
 
-
+[doc('Run a read-only post-change sanity check')]
+[group('kubernetes')]
+sanity-check:
+    ./scripts/sanity-check.sh
 
 [group: 'template']
 mod? template 'template'
