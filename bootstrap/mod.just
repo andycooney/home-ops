@@ -87,8 +87,25 @@ apps-namespaces:
 [script]
 apps-secrets:
     just log info "Applying secrets for apps"
+
+    tmpdir="$(mktemp -d)"
+    trap 'rm -rf "$tmpdir"' EXIT
+
+    op read "op://kubernetes/flux-github-deploy-key/password" > "$tmpdir/github-deploy-key"
+    chmod 600 "$tmpdir/github-deploy-key"
+    ssh-keyscan github.com > "$tmpdir/known_hosts"
+
+    if kubectl --namespace flux-system create secret generic github-deploy-key \
+            --from-file=identity="$tmpdir/github-deploy-key" \
+            --from-file=known_hosts="$tmpdir/known_hosts" \
+            --dry-run=client -o yaml \
+            | kubectl apply --server-side --filename - &>/dev/null; then
+        just log info "Secret applied" resource "github-deploy-key"
+    else
+        just log fatal "Failed to apply secret" resource "github-deploy-key"
+    fi
+
     for secret in \
-        "{{ source_directory() }}/github-deploy-key.sops.yaml" \
         "{{ source_directory() }}/sops-age.sops.yaml" \
         "{{ kubernetes_dir }}/components/sops/cluster-secrets.sops.yaml"
     do
