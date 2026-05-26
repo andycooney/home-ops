@@ -1,0 +1,25 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: ["--unsafe"]
+      - id: check-added-large-files
+        args: ["--maxkb=2048"]
+      - id: detect-private-key
+
+  - repo: local
+    hooks:
+      - id: home-ops-repo-validation
+        name: home-ops repo validation
+        entry: scripts/validate-repo.sh
+        language: system
+        pass_filenames: false
+
+      - id: home-ops-secret-scan
+        name: home-ops secret scan
+        entry: scripts/secret-scan.sh
+        language: system
+        pass_filenames: false
