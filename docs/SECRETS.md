@@ -73,6 +73,18 @@ export OP_SERVICE_ACCOUNT_TOKEN="$(op read 'op://kubernetes/onepass_principal/cr
 
 If rebuilding from a new workstation, make sure the 1Password CLI is authenticated and this token can be read before attempting bootstrap.
 
+## Flux GitHub deploy key
+
+Flux pulls this repository over SSH using the Kubernetes Secret `flux-system/github-deploy-key`.
+
+The private key bootstrap source is stored in 1Password as a Password item:
+
+`op://kubernetes/flux-github-deploy-key/password`
+
+During bootstrap, `bootstrap/mod.just` reads that value into a temporary file and creates the Kubernetes Secret with `identity` and `known_hosts` keys.
+
+Do not store `github-deploy.key` or any plaintext private key in the repository.
+
 ## Flux webhook secret
 
 Vault:
@@ -182,7 +194,7 @@ Known historical files may include:
 
 ```text
 talos/talsecret.sops.yaml
-bootstrap/github-deploy-key.sops.yaml
+op://kubernetes/flux-github-deploy-key/password
 bootstrap/sops-age.sops.yaml
 kubernetes/apps/network/cloudflare-tunnel/app/secret.sops.yaml
 ```
