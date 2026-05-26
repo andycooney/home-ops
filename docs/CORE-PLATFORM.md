@@ -123,6 +123,20 @@ kubectl -n network logs deploy/cloudflare-tunnel --tail=120
 cloudflared tunnel list
 ```
 
+Validate the tunnel token ExternalSecret:
+
+```sh
+kubectl -n network get externalsecret cloudflare-tunnel-secret
+kubectl -n network describe externalsecret cloudflare-tunnel-secret
+kubectl -n network get secret cloudflare-tunnel-secret
+```
+
+Expected:
+
+```text
+cloudflare-tunnel-secret   SecretSynced   True
+```
+
 Current tunnel:
 
 ```text

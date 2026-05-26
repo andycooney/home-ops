@@ -50,6 +50,7 @@ Required fields:
 ```text
 CLOUDFLARE_API_TOKEN
 CLOUDFLARE_TUNNEL_ID
+CLOUDFLARE_TUNNEL_TOKEN
 ```
 
 The Cloudflare API token must be able to manage DNS for certificate validation:
@@ -60,6 +61,30 @@ DNS:Edit
 ```
 
 It also needs permissions required by the tunnel/external DNS setup.
+
+The Cloudflare tunnel runtime token is also stored on this item:
+
+```text
+op://kubernetes/cloudflare/CLOUDFLARE_TUNNEL_TOKEN
+```
+
+The ExternalSecret at:
+
+```text
+kubernetes/apps/network/cloudflare-tunnel/app/externalsecret.yaml
+```
+
+creates:
+
+```text
+network/cloudflare-tunnel-secret
+```
+
+with key:
+
+```text
+TUNNEL_TOKEN
+```
 
 ## 1Password service account
 
@@ -190,22 +215,25 @@ Check remaining SOPS files:
 find . -name "*.sops.yaml" -o -name "*.sops.yml"
 ```
 
-Known historical files may include:
+Current remaining SOPS files should be:
 
 ```text
 talos/talsecret.sops.yaml
-op://kubernetes/flux-github-deploy-key/password
 bootstrap/sops-age.sops.yaml
-kubernetes/apps/network/cloudflare-tunnel/app/secret.sops.yaml
+.sops.yaml
 ```
 
-The Flux GitHub webhook token was moved from SOPS to 1Password.
+SOPS is now retained only for Talos/bootstrap-level material.
 
-The old component path should not be used for domain substitution anymore:
+App/runtime secrets have been moved to 1Password and External Secrets:
 
 ```text
-1Password-backed bootstrap cluster-secrets
+Flux GitHub deploy key -> op://kubernetes/flux-github-deploy-key/password
+cluster-secrets bootstrap values -> op://kubernetes/home-ops-bootstrap and op://kubernetes/cloudflare
+Cloudflare tunnel token -> op://kubernetes/cloudflare/CLOUDFLARE_TUNNEL_TOKEN
 ```
+
+Do not delete the remaining Talos/bootstrap SOPS files unless the Talos recovery flow has been migrated and tested.
 
 ## Secret exposure response
 
