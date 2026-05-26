@@ -105,9 +105,25 @@ apps-secrets:
         just log fatal "Failed to apply secret" resource "github-deploy-key"
     fi
 
+    internal_domain="$(op read "op://kubernetes/home-ops-bootstrap/INTERNAL_DOMAIN")"
+    external_domain="$(op read "op://kubernetes/home-ops-bootstrap/EXTERNAL_DOMAIN")"
+    cloudflare_tunnel_id="$(op read "op://kubernetes/cloudflare/CLOUDFLARE_TUNNEL_ID")"
+
+    for ns in cert-manager default flux-system kube-system network; do
+        if kubectl --namespace "$ns" create secret generic cluster-secrets \
+                --from-literal=INTERNAL_DOMAIN="$internal_domain" \
+                --from-literal=EXTERNAL_DOMAIN="$external_domain" \
+                --from-literal=CLOUDFLARE_TUNNEL_ID="$cloudflare_tunnel_id" \
+                --dry-run=client -o yaml \
+                | kubectl apply --server-side --filename - &>/dev/null; then
+            just log info "Secret applied" resource "cluster-secrets" namespace "$ns"
+        else
+            just log fatal "Failed to apply secret" resource "cluster-secrets" namespace "$ns"
+        fi
+    done
+
     for secret in \
-        "{{ source_directory() }}/sops-age.sops.yaml" \
-        "{{ kubernetes_dir }}/components/sops/cluster-secrets.sops.yaml"
+        "{{ source_directory() }}/sops-age.sops.yaml"
     do
         name="$(basename "$secret" .sops.yaml)"
         if sops exec-file "$secret" \

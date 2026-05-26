@@ -204,7 +204,7 @@ The Flux GitHub webhook token was moved from SOPS to 1Password.
 The old component path should not be used for domain substitution anymore:
 
 ```text
-kubernetes/components/sops/cluster-secrets.sops.yaml
+1Password-backed bootstrap cluster-secrets
 ```
 
 ## Secret exposure response
