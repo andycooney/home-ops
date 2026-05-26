@@ -5,7 +5,10 @@ section() { printf '\n===== %s =====\n' "$*"; }
 
 section "Forbidden upstream residue"
 if grep -R -n -E 'turbo\.ac|expanse\.internal|/mnt/ceres/Kopia|onedr0p/home-ops' \
-  kubernetes talos bootstrap .github docs scripts 2>/dev/null; then
+  kubernetes talos bootstrap .github \
+  --exclude='README.md' \
+  --exclude='*.md' \
+  2>/dev/null; then
   echo "ERROR: forbidden upstream residue found"
   exit 1
 fi

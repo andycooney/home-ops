@@ -8,6 +8,7 @@ Use multiple layers:
 2. Pre-commit hooks.
 3. GitHub Actions validation workflow.
 4. Manual review for secrets in terminal output and generated files.
+5. Cloudflare Access protection for external application hostnames.
 
 ## Local setup
 
@@ -26,7 +27,7 @@ scripts/validate-repo.sh
 scripts/secret-scan.sh
 ```
 
-## What the repo validation checks
+## What repo validation checks
 
 `scripts/validate-repo.sh` checks for:
 
@@ -38,6 +39,41 @@ onedr0p/home-ops
 common private key/API token patterns
 local kustomize render failures
 ```
+
+## External access checks
+
+All normal external apps under:
+
+```text
+*.cooney.online
+```
+
+must require Cloudflare Access unless explicitly documented as public or bypassed.
+
+Validate:
+
+```sh
+WEBHOOK_PATH="$(kubectl -n flux-system get receiver github-webhook -o jsonpath='{.status.webhookPath}')"
+
+curl -I https://echo.cooney.online
+curl -I "https://flux-webhook.cooney.online${WEBHOOK_PATH}"
+curl -I https://flux-webhook.cooney.online
+```
+
+Expected:
+
+```text
+echo.cooney.online
+  -> Cloudflare Access 302
+
+flux-webhook.cooney.online/<exact hook path>
+  -> no Access 302
+
+flux-webhook.cooney.online/
+  -> Cloudflare Access 302
+```
+
+Do not publicly paste Cloudflare Access redirect URLs, cookies, JWTs, `CF_Authorization` headers, or authenticated echo output.
 
 ## If a secret is exposed
 

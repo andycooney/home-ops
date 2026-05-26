@@ -30,3 +30,7 @@ cloudflare-tunnel.json
 1password-credentials.json
 *1password*credentials*.json
 op-connect-token*
+
+# Local/private key material
+github-deploy.key
+*.key
