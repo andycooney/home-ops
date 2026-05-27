@@ -16,7 +16,7 @@ spec:
           gluetun:
             image:
               repository: ghcr.io/qdm12/gluetun
-              tag: v3.40.0
+              tag: v3.41.1
             env:
               VPN_SERVICE_PROVIDER: private internet access
               VPN_TYPE: openvpn
