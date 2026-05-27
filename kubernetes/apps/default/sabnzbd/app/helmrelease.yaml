@@ -28,6 +28,8 @@ spec:
               PGID: "0"
               FIREWALL_INPUT_PORTS: "80"
               FIREWALL_OUTBOUND_SUBNETS: 10.0.0.0/8,192.168.0.0/16,172.16.0.0/12
+              IPV6: "off"
+              DOT_IPV6: "off"
               HEALTH_TARGET_ADDRESS: 1.1.1.1:443
               HEALTH_VPN_DURATION_INITIAL: 90s
               HEALTH_VPN_DURATION_ADDITION: 10s
