@@ -19,6 +19,13 @@ else
   echo "gh not installed; skipping PR check"
 fi
 
+section "Open Issues"
+if command -v gh >/dev/null 2>&1; then
+  gh issue list --repo andycooney/home-ops --state open --limit 20 || true
+else
+  echo "gh CLI not found; skipping open issues list"
+fi
+
 section "Validate repo"
 scripts/validate-repo.sh
 
