@@ -13,6 +13,32 @@ spec:
     controllers:
       sabnzbd:
         containers:
+          gluetun:
+            image:
+              repository: ghcr.io/qdm12/gluetun
+              tag: v3.40.0
+            env:
+              VPN_SERVICE_PROVIDER: private internet access
+              VPN_TYPE: openvpn
+              OPENVPN_PROTOCOL: udp
+              SERVER_REGIONS: US East
+              FIREWALL_INPUT_PORTS: *port
+              FIREWALL_OUTBOUND_SUBNETS: 10.0.0.0/8,192.168.0.0/16,172.16.0.0/12
+              TZ: America/New_York
+            envFrom:
+              - secretRef:
+                  name: sabnzbd-vpn-secret
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                add: ["NET_ADMIN"]
+                drop: ["ALL"]
+            resources:
+              requests:
+                cpu: 10m
+                memory: 128Mi
+              limits:
+                memory: 512Mi
           app:
             image:
               repository: ghcr.io/home-operations/sabnzbd
@@ -44,6 +70,9 @@ spec:
                   failureThreshold: 30
                   periodSeconds: 10
             securityContext:
+              runAsNonRoot: true
+              runAsUser: 1000
+              runAsGroup: 1000
               allowPrivilegeEscalation: false
               readOnlyRootFilesystem: true
               capabilities: {drop: ["ALL"]}
@@ -55,9 +84,6 @@ spec:
                 memory: 4Gi
     defaultPodOptions:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
         fsGroup: 1000
         fsGroupChangePolicy: OnRootMismatch
     service:
