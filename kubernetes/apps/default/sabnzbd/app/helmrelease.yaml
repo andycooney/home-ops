@@ -21,7 +21,7 @@ spec:
               VPN_SERVICE_PROVIDER: private internet access
               VPN_TYPE: openvpn
               OPENVPN_PROTOCOL: udp
-              PRIVATE_INTERNET_ACCESS_OPENVPN_ENCRYPTION_PRESET: normal
+              PRIVATE_INTERNET_ACCESS_OPENVPN_ENCRYPTION_PRESET: strong
               OPENVPN_VERBOSITY: "3"
               SERVER_REGIONS: US East
               PUID: "0"
@@ -29,7 +29,7 @@ spec:
               FIREWALL_INPUT_PORTS: "80"
               FIREWALL_OUTBOUND_SUBNETS: 10.0.0.0/8,192.168.0.0/16,172.16.0.0/12
               HEALTH_TARGET_ADDRESS: 1.1.1.1:443
-              HEALTH_VPN_DURATION_INITIAL: 30s
+              HEALTH_VPN_DURATION_INITIAL: 90s
               HEALTH_VPN_DURATION_ADDITION: 10s
               TZ: America/New_York
             envFrom:
