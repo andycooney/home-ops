@@ -5,6 +5,7 @@ kind: HelmRelease
 metadata:
   name: plex-off-deck
 spec:
+  suspend: true
   chartRef:
     kind: OCIRepository
     name: plex-off-deck
