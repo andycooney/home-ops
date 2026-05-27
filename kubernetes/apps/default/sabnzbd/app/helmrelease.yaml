@@ -29,10 +29,11 @@ spec:
               - secretRef:
                   name: sabnzbd-vpn-secret
             securityContext:
+              runAsUser: 0
+              runAsGroup: 0
               allowPrivilegeEscalation: false
               capabilities:
-                add: ["NET_ADMIN", "CHOWN"]
-                drop: ["ALL"]
+                add: ["NET_ADMIN"]
             resources:
               requests:
                 cpu: 10m
