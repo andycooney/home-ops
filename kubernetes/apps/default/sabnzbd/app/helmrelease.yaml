@@ -30,10 +30,12 @@ spec:
               BLOCK_MALICIOUS: "off"
               BLOCK_SURVEILLANCE: "off"
               BLOCK_ADS: "off"
+              DNS_ADDRESS: 1.1.1.1
+              DOT: "off"
               IPV6: "off"
               DOT_IPV6: "off"
               HEALTH_TARGET_ADDRESS: 1.1.1.1:443
-              HEALTH_VPN_DURATION_INITIAL: 90s
+              HEALTH_VPN_DURATION_INITIAL: 15s
               HEALTH_VPN_DURATION_ADDITION: 10s
               TZ: America/New_York
             envFrom:
