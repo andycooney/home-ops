@@ -39,7 +39,7 @@ jobs:
 
       - name: TruffleHog scan
         if: github.event_name == 'pull_request'
-        uses: trufflesecurity/trufflehog@ec67ff26cdeb5c8600a2ca83992d9347975c172a # main
+        uses: trufflesecurity/trufflehog@v3.95.3
         with:
           path: ./
           base: ${{ github.event.repository.default_branch }}
