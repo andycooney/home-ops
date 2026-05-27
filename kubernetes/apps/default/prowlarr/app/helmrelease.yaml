@@ -27,7 +27,7 @@ spec:
               PROWLARR__LOG__DBENABLED: "False"
               PROWLARR__LOG__LEVEL: info
               PROWLARR__SERVER__PORT: &port 80
-              PROWLARR__UPDATE__BRANCH: develop
+              PROWLARR__UPDATE__BRANCH: main
               TZ: America/New_York
             envFrom:
               - secretRef:
@@ -76,12 +76,13 @@ spec:
           http:
             port: *port
     route:
-      app:
+      internal:
         hostnames:
-          - "{{ .Release.Name }}.turbo.ac"
+          - "{{ .Release.Name }}.cooney.site"
         parentRefs:
           - name: envoy-internal
             namespace: network
+            sectionName: https
     persistence:
       config:
         existingClaim: "{{ .Release.Name }}"
