@@ -110,6 +110,66 @@ fields:
   KOPIA_PASSWORD=<generated>
 ```
 
+## App import workflow from onedr0p/home-ops
+
+Prefer importing a single app from `onedr0p/home-ops` into a short-lived PR branch, then adapting it to this repo before merge.
+
+Start from a clean `main`:
+
+```sh
+git checkout main
+git pull origin main
+git checkout -b <app>-onboarding
+git fetch onedr0p main
+git checkout onedr0p/main -- kubernetes/apps/default/<app>
+```
+
+Adapt the imported app before enabling or merging:
+
+- Replace upstream domains with `{{ .Release.Name }}.cooney.site` for internal apps.
+- Default to internal-only routing through `envoy-internal` with `sectionName: https`.
+- Do not copy upstream secrets, domains, storage paths, node selectors, hardware assumptions, or environment-specific values blindly.
+- Preserve useful schema comments from the upstream manifests.
+- Keep files ending with a trailing newline.
+- Prefer `ceph-block` PVCs for important app config/state.
+- Add the VolSync component and substitutions for persistent app PVCs when backups are expected.
+- Prefer 1Password and External Secrets for app secrets.
+- Enable the app from `kubernetes/apps/default/kustomization.yaml` only after the manifests have been adapted.
+
+Validate and open a PR:
+
+```sh
+scripts/validate-repo.sh
+git status
+git add kubernetes/apps/default/<app> kubernetes/apps/default/kustomization.yaml
+git commit -m "feat: configure <app>"
+git push -u origin <app>-onboarding
+
+gh pr create \
+  --title "feat: configure <app>" \
+  --base main \
+  --head <app>-onboarding
+```
+
+After checks pass, review the GitHub diff and squash merge:
+
+```sh
+gh pr merge <pr-number> --squash --delete-branch
+```
+
+After merge, rely on the GitHub webhook to trigger Flux, then validate live state:
+
+```sh
+git checkout main
+git pull origin main
+
+kubectl -n default get ks <app>
+kubectl -n default get externalsecret,secret,pvc,hr,pod | grep <app>
+kubectl -n default get httproute | grep <app>
+kubectl -n default logs deploy/<app> --tail=100
+just sanity-check
+```
+
 ## Folder pattern
 
 Typical structure:
