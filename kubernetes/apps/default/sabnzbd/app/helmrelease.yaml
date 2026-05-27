@@ -31,7 +31,7 @@ spec:
             securityContext:
               allowPrivilegeEscalation: false
               capabilities:
-                add: ["NET_ADMIN"]
+                add: ["NET_ADMIN", "CHOWN"]
                 drop: ["ALL"]
             resources:
               requests:
