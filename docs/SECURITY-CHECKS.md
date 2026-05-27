@@ -9,6 +9,7 @@ Use multiple layers:
 3. GitHub Actions validation workflow.
 4. Manual review for secrets in terminal output and generated files.
 5. Cloudflare Access protection for external application hostnames.
+6. Renovate PR review for dependency and workflow updates.
 
 ## Local setup
 
@@ -25,6 +26,7 @@ Run manually:
 pre-commit run --all-files
 scripts/validate-repo.sh
 scripts/secret-scan.sh
+just sanity-check
 ```
 
 ## What repo validation checks
@@ -39,6 +41,39 @@ onedr0p/home-ops
 common private key/API token patterns
 local kustomize render failures
 ```
+
+## GitHub Actions and Renovate
+
+Renovate may update or pin GitHub Actions. Treat these PRs as CI/security-impacting changes and review the workflow diff before merging.
+
+Notes:
+
+```text
+docs/RENOVATE.md
+```
+
+The validation workflow needs read-only repository and pull request permissions so secret scanning actions can inspect PR metadata:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: read
+```
+
+## Pager-safe output
+
+Prefer stdout-only commands when sharing output for review:
+
+```sh
+export GIT_PAGER=cat
+export GH_PAGER=cat
+
+GIT_PAGER=cat git diff --stat
+GIT_PAGER=cat git diff
+GH_PAGER=cat gh pr diff <number>
+```
+
+Do not paste authenticated URLs, cookies, tokens, JWTs, private keys, kubeconfigs, Talos secrets, or 1Password values.
 
 ## External access checks
 
