@@ -25,6 +25,8 @@ spec:
               FIREWALL_INPUT_PORTS: "80"
               FIREWALL_OUTBOUND_SUBNETS: 10.0.0.0/8,192.168.0.0/16,172.16.0.0/12
               HEALTH_TARGET_ADDRESS: 1.1.1.1:443
+              HEALTH_VPN_DURATION_INITIAL: 30s
+              HEALTH_VPN_DURATION_ADDITION: 10s
               TZ: America/New_York
             envFrom:
               - secretRef:
