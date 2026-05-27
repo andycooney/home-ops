@@ -24,6 +24,7 @@ The base platform currently includes:
 - VolSync/Kopia backups to QNAP NFS
 - Observability stack
 - GitHub Actions Runner Controller
+- Renovate dependency update automation
 - Tuppr system upgrade controller with upgrades suspended
 - Intel GPU DRA support
 - Multus IoT VLAN groundwork
@@ -85,16 +86,17 @@ Read these files instead of growing this README indefinitely.
 | Observability | [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | Grafana, Prometheus, Alertmanager, probes |
 | Application onboarding | [`docs/APP-ONBOARDING.md`](docs/APP-ONBOARDING.md) | Checklist for adding new apps |
 | Security checks | [`docs/SECURITY-CHECKS.md`](docs/SECURITY-CHECKS.md) | Secret scanning, Cloudflare Access checks, safe output handling |
+| Renovate | [`docs/RENOVATE.md`](docs/RENOVATE.md) | Renovate review flow, merge order, and Talos update handling |
 | Resource requests | [`docs/RESOURCE-REQUESTS.md`](docs/RESOURCE-REQUESTS.md) | Sane request/limit defaults and tuning notes |
 | Restore drill | [`docs/RESTORE-DRILL.md`](docs/RESTORE-DRILL.md) | Periodic restore-test procedure |
 | Base platform checklist | [`docs/BASE-PLATFORM-CHECKLIST.md`](docs/BASE-PLATFORM-CHECKLIST.md) | Current base-platform completion checklist |
 
 ## Common commands
 
-Run a broad health sweep:
+Run a broad post-change sanity check:
 
 ```sh
-scripts/cluster-health.sh
+just sanity-check
 ```
 
 Run repo validation:
@@ -124,7 +126,7 @@ flux get hr -A
 The current base platform checkpoint tag is:
 
 ```text
-working-checkpoint/base-platform-complete
+working-checkpoint/renovate-and-talos-1-13-3
 ```
 
-It marks the repository state after base platform completion and before broader application onboarding.
+It marks the repository state after the Renovate baseline and Talos v1.13.3 patch upgrade.
