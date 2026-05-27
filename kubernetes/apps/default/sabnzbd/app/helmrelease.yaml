@@ -23,7 +23,7 @@ spec:
               OPENVPN_PROTOCOL: udp
               PRIVATE_INTERNET_ACCESS_OPENVPN_ENCRYPTION_PRESET: strong
               OPENVPN_VERBOSITY: "3"
-              SERVER_REGIONS: US East
+              SERVER_REGIONS: US New York
               PUID: "0"
               PGID: "0"
               FIREWALL_INPUT_PORTS: "80"
