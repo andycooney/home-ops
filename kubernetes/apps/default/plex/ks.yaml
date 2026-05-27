@@ -1,0 +1,57 @@
+---
+# yaml-language-server: $schema=https://k8s-schemas.home-operations.com/kustomize.toolkit.fluxcd.io/kustomization_v1.json
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: plex
+spec:
+  targetNamespace: default
+  commonMetadata:
+    labels:
+      app.kubernetes.io/name: plex
+  components:
+    - ../../../../components/volsync
+  dependsOn:
+    - name: intel-gpu-resource-driver
+      namespace: kube-system
+    - name: rook-ceph-cluster
+      namespace: rook-ceph
+  path: ./kubernetes/apps/default/plex/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+  wait: false
+  interval: 30m
+  retryInterval: 1m
+  timeout: 5m
+  postBuild:
+    substitute:
+      APP: plex
+      VOLSYNC_CLAIM: plex
+      VOLSYNC_SECRET_KEY: plex
+      VOLSYNC_CAPACITY: 50Gi
+---
+# yaml-language-server: $schema=https://k8s-schemas.home-operations.com/kustomize.toolkit.fluxcd.io/kustomization_v1.json
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: plex-tools
+spec:
+  targetNamespace: default
+  commonMetadata:
+    labels:
+      app.kubernetes.io/name: plex-tools
+  dependsOn:
+    - name: plex
+  path: ./kubernetes/apps/default/plex/tools
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+  wait: false
+  interval: 30m
+  retryInterval: 1m
+  timeout: 5m
