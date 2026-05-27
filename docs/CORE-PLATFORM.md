@@ -234,6 +234,16 @@ maxRunners: 1
 ephemeral runner set current replicas: 0 when idle
 ```
 
+## Renovate
+
+Renovate is configured through `.renovaterc.json5` and the hosted Renovate GitHub App.
+
+Operational notes:
+
+```text
+docs/RENOVATE.md
+```
+
 ## Tuppr
 
 Tuppr is installed for future controlled Talos/Kubernetes upgrades, but upgrade definitions are suspended.
@@ -256,68 +266,34 @@ tuppr Ready=True
 tuppr-upgrades Suspended=True
 ```
 
-Do not enable `tuppr-upgrades` casually.
+Do not enable `tuppr-upgrades` casually. It is the manual gate for Talos/Kubernetes node upgrades.
 
-## Intel GPU DRA
-
-Intel GPU DRA support is installed for future workloads that can use Intel Quick Sync/iGPU.
-
-Validate:
+To intentionally start a Talos upgrade after reviewing the target version:
 
 ```sh
-flux get ks intel-gpu-resource-driver -n kube-system
-flux get hr intel-gpu-resource-driver -n kube-system
-kubectl -n kube-system get pods | grep -i intel
-kubectl get resourceslices
+flux resume ks tuppr-upgrades -n system-upgrade
 ```
 
-Expected ResourceSlice characteristics:
-
-```text
-Driver: gpu.intel.com
-Driver attribute: i915
-Pci Address: 0000:00:02.0
-Sriov: false
-```
-
-## Multus
-
-Multus is installed for selected workloads that need a secondary IoT VLAN interface.
-
-Validate:
+Watch the rollout:
 
 ```sh
-flux get ks multus multus-networks -n kube-system
-flux get hr multus -n kube-system
-kubectl -n kube-system get pods | grep -i multus
-kubectl get network-attachment-definitions -A
-kubectl -n kube-system get network-attachment-definition iot -o yaml
+kubectl get talosupgrades -A -o wide
+kubectl get nodes -o wide
+kubectl -n system-upgrade get jobs,pods -o wide
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph status
 ```
 
-Expected:
-
-```text
-kube-system/iot NetworkAttachmentDefinition
-interface: eno1.777
-```
-
-## Descheduler
-
-Descheduler is installed in dry-run mode.
-
-Validate:
+After the upgrade completes and all nodes are healthy, suspend the upgrade gate again:
 
 ```sh
-flux get ks descheduler -n kube-system
-flux get hr descheduler -n kube-system
-kubectl -n kube-system get deploy,svc,servicemonitor,pods | grep descheduler
-kubectl -n kube-system logs deploy/descheduler
+flux suspend ks tuppr-upgrades -n system-upgrade
+flux get ks tuppr-upgrades -n system-upgrade
 ```
 
-Expected:
+## Sanity check
 
-```text
-DryRun is set to True
-totalEvicted=0
-evictionRequests=0
+Run the read-only sanity check after Renovate merges, node upgrades, Flux/platform changes, node reboots, recovery drills, or hardware migrations:
+
+```sh
+just sanity-check
 ```
