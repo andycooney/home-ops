@@ -1,5 +1,3 @@
-
-
 ---
 # yaml-language-server: $schema=https://raw.githubusercontent.com/bjw-s-labs/helm-charts/main/charts/other/app-template/schemas/helmrelease-helm-v2.schema.json
 apiVersion: helm.toolkit.fluxcd.io/v2
@@ -85,5 +83,17 @@ spec:
     persistence:
       config:
         existingClaim: sabnzbd
+      media:
+        type: nfs
+        server: storage.cooney.site
+        path: /media
+        globalMounts:
+          - path: /media
+      unprocessed:
+        type: nfs
+        server: storage.cooney.site
+        path: /unprocessed
+        globalMounts:
+          - path: /unprocessed
       tmp:
         type: emptyDir
