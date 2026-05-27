@@ -107,6 +107,14 @@ spec:
             namespace: network
             sectionName: https
     persistence:
+      tun:
+        type: hostPath
+        hostPath: /dev/net/tun
+        hostPathType: CharDevice
+        advancedMounts:
+          sabnzbd:
+            gluetun:
+              - path: /dev/net/tun
       config:
         existingClaim: sabnzbd
       media:
