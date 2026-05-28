@@ -61,6 +61,8 @@ Internal-only:
 - `https://rook.cooney.site`
 - `https://plex.cooney.site`
 - `https://prowlarr.cooney.site`
+- `https://qbittorrent.cooney.site`
+- `https://qui.cooney.site`
 - `https://radarr.cooney.site`
 - `https://sabnzbd.cooney.site`
 - `https://seerr.cooney.site`
