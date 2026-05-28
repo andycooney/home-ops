@@ -39,6 +39,30 @@ location: https://cooney-home.cloudflareaccess.com/...
 www-authenticate: Cloudflare-Access ...
 ```
 
+## Route patterns
+
+Internal-only apps should use one route attached only to `envoy-internal` and a `*.cooney.site` hostname.
+
+Apps that need both internal and external access should use separate route entries:
+
+```yaml
+route:
+  internal:
+    hostnames:
+      - "{{ .Release.Name }}.cooney.site"
+    parentRefs:
+      - name: envoy-internal
+        namespace: network
+  external:
+    hostnames:
+      - "{{ .Release.Name }}.cooney.online"
+    parentRefs:
+      - name: envoy-external
+        namespace: network
+```
+
+Do not put `.site` and `.online` hostnames on the same route with both Gateway parent refs. That can cause external-dns to publish the internal `.site` name through the external gateway.
+
 ## Persistence
 
 Prefer these defaults:
@@ -48,6 +72,20 @@ Prefer these defaults:
 | Important app data | `ceph-block` PVC |
 | Cache/scratch | OpenEBS local hostpath |
 | No persistent data | no PVC |
+
+## Container image notes
+
+Prefer images that work with the repo's default rootless security posture:
+
+```yaml
+runAsNonRoot: true
+runAsUser: 1000
+runAsGroup: 1000
+capabilities:
+  drop: ["ALL"]
+```
+
+Some LinuxServer/hotio-style images use an init layer that must start as root and then use `PUID`/`PGID` for app file ownership. Treat those as explicit exceptions, document them in the app manifest, and keep the exception scoped to that app.
 
 ## Resource defaults
 
@@ -127,7 +165,8 @@ git checkout onedr0p/main -- kubernetes/apps/default/<app>
 Adapt the imported app before enabling or merging:
 
 - Replace upstream domains with `{{ .Release.Name }}.cooney.site` for internal apps.
-- Default to internal-only routing through `envoy-internal` with `sectionName: https`.
+- Default to internal-only routing through `envoy-internal`.
+- For dual-exposure apps, use separate internal and external route entries.
 - Do not copy upstream secrets, domains, storage paths, node selectors, hardware assumptions, or environment-specific values blindly.
 - Preserve useful schema comments from the upstream manifests.
 - Keep files ending with a trailing newline.
