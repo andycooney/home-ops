@@ -60,10 +60,7 @@ spec:
             securityContext:
               runAsUser: 0
               runAsGroup: 0
-              allowPrivilegeEscalation: false
-              capabilities:
-                drop: ["ALL"]
-                add: ["CHOWN", "FOWNER", "SETUID", "SETGID"]
+              allowPrivilegeEscalation: true
             resources:
               requests:
                 cpu: 100m
