@@ -63,7 +63,7 @@ spec:
               allowPrivilegeEscalation: false
               capabilities:
                 drop: ["ALL"]
-                add: ["CHOWN", "FOWNER"]
+                add: ["CHOWN", "FOWNER", "SETUID", "SETGID"]
             resources:
               requests:
                 cpu: 100m
