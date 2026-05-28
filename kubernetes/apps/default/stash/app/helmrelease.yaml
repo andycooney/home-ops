@@ -92,6 +92,15 @@ spec:
             app:
               - path: /data
                 readOnly: true
+      unprocessed:
+        type: nfs
+        server: storage.cooney.site
+        path: /unprocessed
+        advancedMounts:
+          stash:
+            app:
+              - path: /unprocessed
+                readOnly: true
       metadata:
         type: emptyDir
         globalMounts:
