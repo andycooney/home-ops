@@ -65,6 +65,7 @@ Internal-only:
 - `https://sabnzbd.cooney.site`
 - `https://seerr.cooney.site`
 - `https://sonarr.cooney.site`
+- `https://stash.cooney.site`
 - `https://grafana.cooney.site`
 - `https://prometheus.cooney.site`
 - `https://alertmanager.cooney.site`
