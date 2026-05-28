@@ -6,6 +6,8 @@ metadata:
   name: recyclarr
 spec:
   targetNamespace: default
+  components:
+    - ../../../../components/volsync
   commonMetadata:
     labels:
       app.kubernetes.io/name: recyclarr
@@ -22,3 +24,6 @@ spec:
   postBuild:
     substitute:
       APP: recyclarr
+      VOLSYNC_CLAIM: recyclarr
+      VOLSYNC_SECRET_KEY: recyclarr
+      VOLSYNC_CAPACITY: 1Gi
