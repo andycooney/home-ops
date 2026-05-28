@@ -1,0 +1,103 @@
+---
+# yaml-language-server: $schema=https://raw.githubusercontent.com/bjw-s-labs/helm-charts/main/charts/other/app-template/schemas/helmrelease-helm-v2.schema.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: whisparr
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: whisparr
+  interval: 30m
+  values:
+    controllers:
+      whisparr:
+        annotations:
+          reloader.stakater.com/auto: "true"
+        containers:
+          app:
+            image:
+              repository: ghcr.io/hotio/whisparr
+              tag: v3-3.3.3-release.683@sha256:34653e1cf10b99532b56f8afecbca449d32bf460b2b03990b7ecff898e789c13
+            env:
+              WHISPARR__APP__INSTANCENAME: Whisparr
+              WHISPARR__APP__THEME: dark
+              WHISPARR__AUTH__METHOD: External
+              WHISPARR__AUTH__REQUIRED: DisabledForLocalAddresses
+              WHISPARR__LOG__DBENABLED: "False"
+              WHISPARR__LOG__LEVEL: info
+              WHISPARR__SERVER__PORT: &port 80
+              WHISPARR__UPDATE__BRANCH: develop
+              TZ: America/New_York
+            envFrom:
+              - secretRef:
+                  name: "{{ .Release.Name }}-secret"
+            probes:
+              liveness:
+                enabled: true
+                spec:
+                  periodSeconds: 30
+                  timeoutSeconds: 5
+                  failureThreshold: 5
+              readiness:
+                enabled: true
+                custom: true
+                spec:
+                  httpGet:
+                    path: /ping
+                    port: *port
+                  periodSeconds: 10
+                  timeoutSeconds: 5
+                  failureThreshold: 5
+              startup:
+                enabled: true
+                spec:
+                  failureThreshold: 30
+                  periodSeconds: 10
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities: {drop: ["ALL"]}
+            resources:
+              requests:
+                cpu: 100m
+                memory: 512Mi
+              limits:
+                memory: 4Gi
+    defaultPodOptions:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+    service:
+      app:
+        ports:
+          http:
+            port: *port
+    route:
+      internal:
+        hostnames:
+          - "{{ .Release.Name }}.cooney.site"
+        parentRefs:
+          - name: envoy-internal
+            namespace: network
+            sectionName: https
+    persistence:
+      config:
+        existingClaim: "{{ .Release.Name }}"
+      media:
+        type: nfs
+        server: storage.cooney.site
+        path: /media
+        globalMounts:
+          - path: /media
+      unprocessed:
+        type: nfs
+        server: storage.cooney.site
+        path: /unprocessed
+        globalMounts:
+          - path: /unprocessed
+      tmp:
+        type: emptyDir
