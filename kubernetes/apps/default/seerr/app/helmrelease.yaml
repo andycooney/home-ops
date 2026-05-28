@@ -71,16 +71,22 @@ spec:
           http:
             port: *port
     route:
-      app:
+      internal:
         annotations:
           gatus.home-operations.com/endpoint: |-
             conditions: ["[STATUS] == 200"]
         hostnames:
           - "{{ .Release.Name }}.cooney.site"
-          - "{{ .Release.Name }}.cooney.online"
         parentRefs:
           - name: envoy-internal
             namespace: network
+      external:
+        annotations:
+          gatus.home-operations.com/endpoint: |-
+            conditions: ["[STATUS] == 200"]
+        hostnames:
+          - "{{ .Release.Name }}.cooney.online"
+        parentRefs:
           - name: envoy-external
             namespace: network
     persistence:
