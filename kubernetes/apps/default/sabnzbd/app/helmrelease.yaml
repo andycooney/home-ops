@@ -51,7 +51,7 @@ spec:
               tag: 5.0.3@sha256:53064020792b2e21305c892c11aaa1eb32af2141cbd59119b52df226d664cd05
             env:
               SABNZBD__PORT: &port 80
-              SABNZBD__HOST_WHITELIST_ENTRIES: sabnzbd.cooney.site,sabnzbd.cooney.online
+              SABNZBD__HOST_WHITELIST_ENTRIES: sabnzbd,sabnzbd.default,sabnzbd.default.svc,sabnzbd.default.svc.cluster.local,sabnzbd.cooney.site,sabnzbd.cooney.online,radarr,radarr.default,radarr.default.svc,radarr.default.svc.cluster.local,sonarr,sonarr.default,sonarr.default.svc,sonarr.default.svc.cluster.local,whisparr,whisparr.default,whisparr.default.svc,whisparr.default.svc.cluster.local
               TZ: America/New_York
             probes:
               liveness:
