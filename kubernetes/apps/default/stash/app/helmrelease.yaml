@@ -28,7 +28,7 @@ spec:
               STASH_GENERATED: /generated/
               STASH_METADATA: /metadata/
               STASH_PORT: &port 9999
-              STASH_STASH: /data/
+              STASH_STASH: /media/
             probes:
               liveness:
                 enabled: true
@@ -93,7 +93,7 @@ spec:
         advancedMounts:
           stash:
             app:
-              - path: /data
+              - path: /media
                 readOnly: true
       unprocessed:
         type: nfs
