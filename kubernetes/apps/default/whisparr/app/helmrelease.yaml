@@ -28,6 +28,9 @@ spec:
               WHISPARR__LOG__LEVEL: info
               WHISPARR__SERVER__PORT: &port 80
               WHISPARR__UPDATE__BRANCH: develop
+              PUID: "1000"
+              PGID: "1000"
+              UMASK: "002"
               TZ: America/New_York
             envFrom:
               - secretRef:
@@ -55,8 +58,9 @@ spec:
                   failureThreshold: 30
                   periodSeconds: 10
             securityContext:
+              runAsUser: 0
+              runAsGroup: 0
               allowPrivilegeEscalation: false
-              readOnlyRootFilesystem: true
               capabilities: {drop: ["ALL"]}
             resources:
               requests:
@@ -66,9 +70,6 @@ spec:
                 memory: 4Gi
     defaultPodOptions:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
         fsGroup: 1000
         fsGroupChangePolicy: OnRootMismatch
     service:
