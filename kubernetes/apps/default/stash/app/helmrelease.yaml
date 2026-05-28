@@ -21,7 +21,10 @@ spec:
               tag: v0.31.1@sha256:df744af5a0c976e2ec671052ecc1f8a9aa757fa12b8f9930b59910b7295f0da6
             env:
               TZ: America/New_York
+              HOME: /config
+              USER: stash
               STASH_CACHE: /cache/
+              STASH_CONFIG_FILE: /config/config.yml
               STASH_GENERATED: /generated/
               STASH_METADATA: /metadata/
               STASH_PORT: &port 9999
@@ -82,7 +85,7 @@ spec:
       config:
         existingClaim: "{{ .Release.Name }}"
         globalMounts:
-          - path: /root/.stash
+          - path: /config
       media:
         type: nfs
         server: storage.cooney.site
