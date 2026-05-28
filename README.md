@@ -59,7 +59,12 @@ Internal-only:
 - `https://flux.cooney.site`
 - `https://kopia.cooney.site`
 - `https://rook.cooney.site`
+- `https://plex.cooney.site`
+- `https://prowlarr.cooney.site`
+- `https://radarr.cooney.site`
 - `https://sabnzbd.cooney.site`
+- `https://seerr.cooney.site`
+- `https://sonarr.cooney.site`
 - `https://grafana.cooney.site`
 - `https://prometheus.cooney.site`
 - `https://alertmanager.cooney.site`
@@ -67,9 +72,10 @@ Internal-only:
 External:
 
 - `https://echo.cooney.online`
+- `https://seerr.cooney.online`
 - `https://flux-webhook.cooney.online`
 
-`echo.cooney.online` should require Cloudflare Access. The Flux webhook has an exact-path Cloudflare Access bypass so GitHub can deliver webhook events.
+`echo.cooney.online` and `seerr.cooney.online` should require Cloudflare Access. The Flux webhook has an exact-path Cloudflare Access bypass so GitHub can deliver webhook events.
 
 ## Documentation map
 
