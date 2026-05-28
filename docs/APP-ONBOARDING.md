@@ -87,6 +87,8 @@ capabilities:
 
 Some LinuxServer/hotio-style images use an init layer that must start as root and then use `PUID`/`PGID` for app file ownership. Treat those as explicit exceptions, document them in the app manifest, and keep the exception scoped to that app.
 
+Some otherwise-rootless images need explicit user environment variables when the application expects a username or home directory. Prefer keeping the app rootless and setting app-specific values such as `HOME`, `USER`, and an explicit config file path mounted on the app PVC.
+
 ## Resource defaults
 
 Start small and adjust from real usage.
@@ -123,6 +125,17 @@ resources:
   limits:
     memory: 2Gi
 ```
+
+## Media app mounts
+
+Media apps that need library access should use the standard in-container paths:
+
+```text
+/media
+/unprocessed
+```
+
+For read-only library access, mount the NFS shares at those same paths with `readOnly: true`. Avoid introducing aliases such as `/data` unless the app requires them.
 
 ## VolSync/Kopia
 
