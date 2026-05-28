@@ -5,10 +5,10 @@ Renovate is enabled for `home-ops` using the hosted Renovate GitHub App and the 
 ## Operating model
 
 - Renovate opens pull requests against `main`.
-- Automerge is disabled for this repository baseline.
-- Review and merge Renovate pull requests manually.
-- Use squash merge for Renovate PRs to keep `main` history compact.
-- Rebase/retry Renovate PRs after significant platform changes before merging them.
+- Patch and digest updates may automerge after checks pass, except for sensitive platform packages.
+- Minor, major, and cluster-impacting updates remain manual review by default.
+- Use squash merge for manually reviewed Renovate PRs to keep `main` history compact.
+- Rebase or retry Renovate PRs after significant platform changes before merging them.
 
 ## Normal review flow
 
@@ -34,14 +34,17 @@ git pull
 
 ## Rebase all open Renovate PRs
 
-After broad repo changes, platform upgrades, or workflow changes, ask Renovate to rebase all open PRs:
+After broad repo changes, platform upgrades, or workflow changes, ask Renovate to rebase all open PRs from the GitHub UI or by commenting on each PR with the Renovate rebase command.
 
-```sh
-for pr in $(gh pr list --state open --search "author:renovate[bot]" --json number --jq '.[].number'); do
-  echo "Requesting Renovate rebase for PR #$pr"
-  gh pr comment "$pr" --body "@renovatebot rebase"
-done
+## GitHub Actions pinning
+
+GitHub Actions should use immutable commit SHA pins with a release-version comment when available, for example:
+
+```yaml
+uses: trufflesecurity/trufflehog@37b77001d0174ebec2fcca2bd83ff83a6d45a3ab # v3.95.3
 ```
+
+This keeps the workflow supply-chain safer while preserving a readable release version. Renovate detects these as `version@sha` and should update the version and SHA together.
 
 ## Suggested merge order
 
@@ -53,6 +56,16 @@ Prefer this order when Renovate opens a large initial backlog:
 4. Cluster-impacting controllers one at a time.
 5. Talos and Kubernetes upgrades only during an intentional maintenance window.
 6. Major GitHub Actions or application updates after separate review.
+
+## Sensitive platform packages
+
+The Renovate config keeps these manual even when patch updates are generally allowed to automerge:
+
+- Rook/Ceph packages
+- kube-prometheus-stack
+- Gluetun
+
+Review these one at a time and run `just sanity-check` after merge.
 
 ## Talos-related Renovate PRs
 
