@@ -137,6 +137,30 @@ Media apps that need library access should use the standard in-container paths:
 
 For read-only library access, mount the NFS shares at those same paths with `readOnly: true`. Avoid introducing aliases such as `/data` unless the app requires them.
 
+## VPN-bound downloader apps
+
+Use the SABnzbd/qBittorrent Gluetun sidecar pattern for downloader apps that must egress through PIA.
+
+Defaults:
+
+- Keep the downloader WebUI internal-only on `*.cooney.site`.
+- Reuse the shared `pia` 1Password item, but render an app-scoped VPN secret.
+- Keep `/media` and `/unprocessed` mounted at the standard paths.
+- Do not expose a BitTorrent LoadBalancer or inbound listener until inbound port handling is explicitly designed.
+- Verify egress from the app container and the Gluetun sidecar before considering the app done.
+
+Example VPN egress check:
+
+```sh
+POD="$(kubectl -n default get pod -l app.kubernetes.io/name=qbittorrent -o jsonpath='{.items[0].metadata.name}')"
+
+kubectl -n default exec "$POD" -c app -- wget -qO- https://ifconfig.co
+kubectl -n default exec "$POD" -c gluetun -- wget -qO- https://ifconfig.co
+kubectl -n default exec "$POD" -c app -- ip route
+```
+
+Expected result: the app container and Gluetun sidecar report the same public IP, and the app container has split default routes through `tun0`.
+
 ## VolSync/Kopia
 
 For persistent apps:
