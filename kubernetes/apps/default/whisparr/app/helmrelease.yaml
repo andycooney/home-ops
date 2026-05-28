@@ -61,7 +61,9 @@ spec:
               runAsUser: 0
               runAsGroup: 0
               allowPrivilegeEscalation: false
-              capabilities: {drop: ["ALL"]}
+              capabilities:
+                drop: ["ALL"]
+                add: ["CHOWN", "FOWNER"]
             resources:
               requests:
                 cpu: 100m
