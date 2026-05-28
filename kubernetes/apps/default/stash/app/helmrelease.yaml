@@ -1,0 +1,108 @@
+---
+# yaml-language-server: $schema=https://raw.githubusercontent.com/bjw-s-labs/helm-charts/main/charts/other/app-template/schemas/helmrelease-helm-v2.schema.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: stash
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: stash
+  interval: 30m
+  values:
+    controllers:
+      stash:
+        annotations:
+          reloader.stakater.com/auto: "true"
+        containers:
+          app:
+            image:
+              repository: stashapp/stash
+              tag: v0.31.1@sha256:df744af5a0c976e2ec671052ecc1f8a9aa757fa12b8f9930b59910b7295f0da6
+            env:
+              TZ: America/New_York
+              STASH_CACHE: /cache/
+              STASH_GENERATED: /generated/
+              STASH_METADATA: /metadata/
+              STASH_PORT: &port 9999
+              STASH_STASH: /data/
+            probes:
+              liveness:
+                enabled: true
+                spec:
+                  periodSeconds: 30
+                  timeoutSeconds: 5
+                  failureThreshold: 5
+              readiness:
+                enabled: true
+                custom: true
+                spec:
+                  httpGet:
+                    path: /
+                    port: *port
+                  periodSeconds: 10
+                  timeoutSeconds: 5
+                  failureThreshold: 5
+              startup:
+                enabled: true
+                spec:
+                  failureThreshold: 30
+                  periodSeconds: 10
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities: {drop: ["ALL"]}
+            resources:
+              requests:
+                cpu: 50m
+                memory: 256Mi
+              limits:
+                memory: 1Gi
+    defaultPodOptions:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+    service:
+      app:
+        ports:
+          http:
+            port: *port
+    route:
+      internal:
+        hostnames:
+          - "{{ .Release.Name }}.cooney.site"
+        parentRefs:
+          - name: envoy-internal
+            namespace: network
+            sectionName: https
+    persistence:
+      config:
+        existingClaim: "{{ .Release.Name }}"
+        globalMounts:
+          - path: /root/.stash
+      media:
+        type: nfs
+        server: storage.cooney.site
+        path: /media
+        advancedMounts:
+          stash:
+            app:
+              - path: /data
+                readOnly: true
+      metadata:
+        type: emptyDir
+        globalMounts:
+          - path: /metadata
+      cache:
+        type: emptyDir
+        globalMounts:
+          - path: /cache
+      generated:
+        type: emptyDir
+        globalMounts:
+          - path: /generated
+      tmp:
+        type: emptyDir
