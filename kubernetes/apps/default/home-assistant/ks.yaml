@@ -3,6 +3,7 @@ kind: Kustomization
 metadata:
   name: home-assistant
 spec:
+  suspend: true
   targetNamespace: default
   commonMetadata:
     labels:
