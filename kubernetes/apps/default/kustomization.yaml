@@ -9,6 +9,8 @@ components:
 resources:
   - ./namespace.yaml
   - ./echo/ks.yaml
+  - ./home-assistant/ks.yaml
+  - ./mosquitto/ks.yaml
   - ./plex/ks.yaml
   - ./prowlarr/ks.yaml
   - ./qbittorrent/ks.yaml
@@ -20,3 +22,5 @@ resources:
   - ./sonarr/ks.yaml
   - ./stash/ks.yaml
   - ./whisparr/ks.yaml
+  - ./zigbee/ks.yaml
+  - ./zwave/ks.yaml
