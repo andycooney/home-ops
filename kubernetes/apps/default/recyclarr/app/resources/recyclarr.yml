@@ -18,7 +18,7 @@ sonarr:
     quality_definition:
       type: series
     quality_profiles:
-      - trash_id: c4cadd6b35b95f62c3d47a408e53e2f7 # WEB-2160p (Combined)
+      - trash_id: 72dae194fc92bf828f32cde7744e51a1 # WEB-1080p
         reset_unmatched_scores:
           enabled: true
     custom_formats:
@@ -26,7 +26,8 @@ sonarr:
         trash_ids:
           - 5d9fd1b1e06cd8a475462f40214b7df6 # FLUX
         assign_scores_to:
-          - trash_id: c4cadd6b35b95f62c3d47a408e53e2f7 # WEB-2160p (Combined)
+          # - trash_id: c4cadd6b35b95f62c3d47a408e53e2f7 # WEB-2160p (Combined)
+          - trash_id: 72dae194fc92bf828f32cde7744e51a1 # WEB-1080p
             score: 100
       - # Unwanted
         trash_ids:
@@ -35,7 +36,8 @@ sonarr:
           - e1a997ddb54e3ecbfe06341ad323c458 # Obfuscated
           - 06d66ab109d4d2eddb2794d21526d140 # Retags
         assign_scores_to:
-          - trash_id: c4cadd6b35b95f62c3d47a408e53e2f7 # WEB-2160p (Combined)
+          - trash_id: 72dae194fc92bf828f32cde7744e51a1 # WEB-1080p
+            score: 100
 
 radarr:
   movies:
