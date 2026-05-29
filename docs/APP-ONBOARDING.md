@@ -161,6 +161,74 @@ kubectl -n default exec "$POD" -c app -- ip route
 
 Expected result: the app container and Gluetun sidecar report the same public IP, and the app container has split default routes through `tun0`.
 
+## Suspended app migrations
+
+For stateful apps that need old appdata copied before first startup, merge the manifests with the app Kustomization suspended:
+
+```yaml
+spec:
+  suspend: true
+```
+
+Then create or confirm the target PVCs, copy appdata with a temporary pod, validate the copied layout, and only then unsuspend the app.
+
+Common temporary copy-pod pattern:
+
+```sh
+cat <<'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: <app>-config-copy
+  namespace: default
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  containers:
+    - name: copy
+      image: busybox:1.37
+      command: ["sh", "-c", "sleep 3600"]
+      volumeMounts:
+        - name: config
+          mountPath: /config
+  volumes:
+    - name: config
+      persistentVolumeClaim:
+        claimName: <app>
+EOF
+```
+
+Copy data with `rsync` to a local temp folder first, then stream a tar archive into the pod:
+
+```sh
+rm -rf /tmp/<app>-appdata-copy
+mkdir -p /tmp/<app>-appdata-copy
+
+sudo rsync -av --progress /Volumes/appdata/<app>/ /tmp/<app>-appdata-copy/
+sudo chown -R "$(id -u):$(id -g)" /tmp/<app>-appdata-copy
+
+tar -C /tmp/<app>-appdata-copy -cf - . \
+  | kubectl -n default exec -i <app>-config-copy -- tar -C /config -xf -
+```
+
+Clean macOS metadata and stale runtime files before first startup:
+
+```sh
+kubectl -n default exec <app>-config-copy -- sh -c '
+  find /config -name "._*" -type f -print -delete
+  find /config -name ".DS_Store" -type f -print -delete
+'
+```
+
+Remove the copy pod after verification:
+
+```sh
+kubectl -n default delete pod <app>-config-copy
+```
+
 ## VolSync/Kopia
 
 For persistent apps:
