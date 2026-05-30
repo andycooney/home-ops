@@ -35,9 +35,9 @@ spec:
                   failureThreshold: 30
                   periodSeconds: 10
             securityContext:
-              allowPrivilegeEscalation: false
-              readOnlyRootFilesystem: false
-              capabilities: {drop: ["ALL"]}
+              runAsUser: 0
+              runAsGroup: 0
+              allowPrivilegeEscalation: true
             resources:
               requests:
                 cpu: 100m
@@ -48,8 +48,7 @@ spec:
           volumeClaimTemplates: []
     defaultPodOptions:
       securityContext:
-        runAsNonRoot: false
-        fsGroup: 1000
+        fsGroup: 999
         fsGroupChangePolicy: OnRootMismatch
     service:
       app:
