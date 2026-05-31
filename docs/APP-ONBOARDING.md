@@ -73,6 +73,46 @@ Prefer these defaults:
 | Cache/scratch | OpenEBS local hostpath |
 | No persistent data | no PVC |
 
+## Shared data services
+
+Stateful shared services that other apps depend on should not default to `default` unless they are application-specific.
+
+Current pattern:
+
+```text
+kubernetes/apps/database/postgres
+namespace: database
+service: postgres.database.svc.cluster.local
+```
+
+For raw PostgreSQL data directory migrations, start with the same major PostgreSQL version as the copied data directory. Do not point a newer major version image at an old raw data directory. Upgrade later with a planned `pg_upgrade` or dump/restore.
+
+The official PostgreSQL image may need to start as root so its entrypoint can adjust permissions and switch to the `postgres` user internally. During the Home Assistant recorder migration, the successful pattern was:
+
+```yaml
+securityContext:
+  runAsUser: 0
+  runAsGroup: 0
+  allowPrivilegeEscalation: true
+```
+
+with pod-level:
+
+```yaml
+defaultPodOptions:
+  securityContext:
+    fsGroup: 999
+    fsGroupChangePolicy: OnRootMismatch
+```
+
+After a raw PostgreSQL data copy, remove stale runtime files and macOS metadata before first startup:
+
+```sh
+rm -f /var/lib/postgresql/data/postmaster.pid
+find /var/lib/postgresql/data -name "._*" -type f -delete
+find /var/lib/postgresql/data -name ".DS_Store" -type f -delete
+```
+
 ## Container image notes
 
 Prefer images that work with the repo's default rootless security posture:
@@ -161,6 +201,18 @@ kubectl -n default exec "$POD" -c app -- ip route
 
 Expected result: the app container and Gluetun sidecar report the same public IP, and the app container has split default routes through `tun0`.
 
+If a downloader WebUI is protected by app-level authentication, avoid HTTP readiness probes against authenticated endpoints. Use a TCP readiness probe instead so a legitimate `403` does not remove the pod from service endpoints.
+
+For qBittorrent, downstream apps should connect to the service directly rather than to Qui:
+
+```text
+host: qbittorrent.default.svc.cluster.local
+port: 80
+ssl: false
+```
+
+Qui is only a management/UI layer and should not be used as the qBittorrent API endpoint for Sonarr, Radarr, Prowlarr, or Whisparr.
+
 ## Suspended app migrations
 
 For stateful apps that need old appdata copied before first startup, merge the manifests with the app Kustomization suspended:
@@ -212,6 +264,13 @@ sudo chown -R "$(id -u):$(id -g)" /tmp/<app>-appdata-copy
 
 tar -C /tmp/<app>-appdata-copy -cf - . \
   | kubectl -n default exec -i <app>-config-copy -- tar -C /config -xf -
+```
+
+For PostgreSQL raw data directory copies on macOS, the built-in `rsync` may not support all GNU options. Use a conservative form:
+
+```sh
+sudo rsync -aH --numeric-ids --progress /Volumes/appdata/postgresql/15/data/ /tmp/postgres-appdata-copy/
+sudo chown -R "$(id -u):$(id -g)" /tmp/postgres-appdata-copy
 ```
 
 Clean macOS metadata and stale runtime files before first startup:
@@ -330,6 +389,20 @@ kubernetes/apps/<namespace>/<app>/
   volsync/
     kustomization.yaml         # optional
     replicationsource.yaml     # optional
+```
+
+For higher-level namespaces such as `database`, add the namespace-level folder to:
+
+```text
+kubernetes/apps/kustomization.yaml
+```
+
+and keep namespace resources under:
+
+```text
+kubernetes/apps/<namespace>/
+  namespace.yaml
+  kustomization.yaml
 ```
 
 ## Required validation
