@@ -21,6 +21,7 @@ resources:
   - ./seerr/ks.yaml
   - ./sonarr/ks.yaml
   - ./stash/ks.yaml
+  - ./tautulli/ks.yaml
   - ./whisparr/ks.yaml
   - ./zigbee/ks.yaml
   - ./zwave/ks.yaml

@@ -114,6 +114,7 @@ spec:
         hostnames:
           - home-assistant.cooney.site
           - hass.cooney.site
+          - ha.cooney.site
         parentRefs:
           - name: envoy-internal
             namespace: network
