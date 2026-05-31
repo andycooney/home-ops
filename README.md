@@ -61,6 +61,7 @@ Internal-only:
 - `https://rook.cooney.site`
 - `https://home-assistant.cooney.site`
 - `https://hass.cooney.site`
+- `https://ha.cooney.site`
 - `https://zigbee.cooney.site`
 - `https://zwave.cooney.site`
 - `https://plex.cooney.site`
@@ -70,8 +71,11 @@ Internal-only:
 - `https://radarr.cooney.site`
 - `https://sabnzbd.cooney.site`
 - `https://seerr.cooney.site`
+- `https://media.cooney.site`
+- `https://requests.cooney.site`
 - `https://sonarr.cooney.site`
 - `https://stash.cooney.site`
+- `https://tautulli.cooney.site`
 - `https://grafana.cooney.site`
 - `https://prometheus.cooney.site`
 - `https://alertmanager.cooney.site`
@@ -80,6 +84,8 @@ External:
 
 - `https://echo.cooney.online`
 - `https://seerr.cooney.online`
+- `https://media.cooney.online`
+- `https://requests.cooney.online`
 - `https://flux-webhook.cooney.online`
 
 `echo.cooney.online` and `seerr.cooney.online` should require Cloudflare Access. The Flux webhook has an exact-path Cloudflare Access bypass so GitHub can deliver webhook events.
@@ -98,6 +104,7 @@ Read these files instead of growing this README indefinitely.
 | Secrets and credentials | [`docs/SECRETS.md`](docs/SECRETS.md) | 1Password, External Secrets, SOPS remnants, required items |
 | Observability | [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | Grafana, Prometheus, Alertmanager, probes |
 | Home automation | [`docs/HOME-AUTOMATION.md`](docs/HOME-AUTOMATION.md) | Home Assistant, Mosquitto, Zigbee2MQTT, and Z-Wave rollout notes |
+| Media stack | [`docs/MEDIA-STACK.md`](docs/MEDIA-STACK.md) | Plex, Seerr, Tautulli, downloaders, and media app validation |
 | Application onboarding | [`docs/APP-ONBOARDING.md`](docs/APP-ONBOARDING.md) | Checklist for adding new apps |
 | Security checks | [`docs/SECURITY-CHECKS.md`](docs/SECURITY-CHECKS.md) | Secret scanning, Cloudflare Access checks, safe output handling |
 | Renovate | [`docs/RENOVATE.md`](docs/RENOVATE.md) | Renovate review flow, merge order, and Talos update handling |

@@ -77,6 +77,8 @@ spec:
             conditions: ["[STATUS] == 200"]
         hostnames:
           - "{{ .Release.Name }}.cooney.site"
+          - media.cooney.site
+          - requests.cooney.site
         parentRefs:
           - name: envoy-internal
             namespace: network
@@ -86,6 +88,8 @@ spec:
             conditions: ["[STATUS] == 200"]
         hostnames:
           - "{{ .Release.Name }}.cooney.online"
+          - media.cooney.online
+          - requests.cooney.online
         parentRefs:
           - name: envoy-external
             namespace: network

@@ -21,11 +21,7 @@ spec:
               tag: 2.17.1@sha256:2183820d45a1413b4b8868fc18ad5eb9259630ea0151348cdc9cfb4017a0dd33
             env:
               TZ: America/New_York
-              TAUTULLI_HTTP_BASE_URL: https://tautulli.turbo.ac
               TAUTULLI_HTTP_PORT: &port 80
-            envFrom:
-              - secretRef:
-                  name: "{{ .Release.Name }}-secret"
             probes:
               liveness:
                 enabled: true
@@ -55,6 +51,7 @@ spec:
             resources:
               requests:
                 cpu: 10m
+                memory: 256Mi
               limits:
                 memory: 1Gi
     defaultPodOptions:
@@ -70,14 +67,19 @@ spec:
           http:
             port: *port
     route:
-      app:
+      internal:
+        annotations:
+          gatus.home-operations.com/endpoint: |-
+            conditions: ["[STATUS] == 200"]
+            path: /status
         hostnames:
-          - "{{ .Release.Name }}.turbo.ac"
+          - tautulli.cooney.site
         parentRefs:
           - name: envoy-internal
             namespace: network
+            sectionName: https
     persistence:
       config:
-        existingClaim: "{{ .Release.Name }}"
+        existingClaim: tautulli
       tmp:
         type: emptyDir

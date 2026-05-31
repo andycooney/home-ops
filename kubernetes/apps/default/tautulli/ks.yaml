@@ -5,21 +5,28 @@ kind: Kustomization
 metadata:
   name: tautulli
 spec:
+  targetNamespace: default
+  commonMetadata:
+    labels:
+      app.kubernetes.io/name: tautulli
   components:
     - ../../../../components/volsync
-    - ../../../../components/zeroscaler
   dependsOn:
     - name: rook-ceph-cluster
       namespace: rook-ceph
-  interval: 1h
   path: ./kubernetes/apps/default/tautulli/app
-  postBuild:
-    substitute:
-      APP: tautulli
   prune: true
   sourceRef:
     kind: GitRepository
     name: flux-system
     namespace: flux-system
-  targetNamespace: default
   wait: false
+  interval: 30m
+  retryInterval: 1m
+  timeout: 5m
+  postBuild:
+    substitute:
+      APP: tautulli
+      VOLSYNC_CLAIM: tautulli
+      VOLSYNC_SECRET_KEY: tautulli
+      VOLSYNC_CAPACITY: 5Gi
