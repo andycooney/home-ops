@@ -127,12 +127,32 @@ spec:
     persistence:
       config:
         existingClaim: "{{ .Release.Name }}"
-      media:
-        type: nfs
-        server: storage.cooney.site
-        path: /media
-        globalMounts:
-          - path: /media
-            readOnly: true
       tmp:
         type: emptyDir
+      tvshows:
+        type: nfs
+        server: storage.cooney.site
+        path: /media/tvshows
+        advancedMounts:
+          plex:
+            app:
+              - path: /media/tvshows
+                readOnly: true
+      movies:
+        type: nfs
+        server: storage.cooney.site
+        path: /media/movies
+        advancedMounts:
+          plex:
+            app:
+              - path: /media/movies
+                readOnly: true
+      transcode:
+        type: nfs
+        server: storage.cooney.site
+        path: /media/transcode
+        advancedMounts:
+          plex:
+            app:
+              - path: /media/transcode
+                readOnly: false
