@@ -73,21 +73,14 @@ spec:
           http:
             port: *port
     route:
-      app:
-        annotations:
-          gatus.home-operations.com/endpoint: |-
-            path: /identity
+      internal:
         hostnames:
-          - "{{ .Release.Name }}.cooney.site"
+          - plex.cooney.site
         parentRefs:
           - name: envoy-internal
             namespace: network
         rules:
-          - # Ref: https://forums.plex.tv/t/external-srt-subtitles-are-not-working-w-reverse-proxy/886540
-            backendRefs:
-              - identifier: app
-                port: *port
-            filters:
+          - filters:
               - type: RequestHeaderModifier
                 requestHeaderModifier:
                   remove:
@@ -96,9 +89,42 @@ spec:
               - path:
                   type: PathPrefix
                   value: /library/streams
-          - backendRefs:
-              - identifier: app
-                port: *port
+            backendRefs:
+              - name: plex
+                port: 32400
+          - matches:
+              - path:
+                  type: PathPrefix
+                  value: /
+            backendRefs:
+              - name: plex
+                port: 32400
+      external:
+        hostnames:
+          - plex.cooney.online
+        parentRefs:
+          - name: envoy-external
+            namespace: network
+        rules:
+          - filters:
+              - type: RequestHeaderModifier
+                requestHeaderModifier:
+                  remove:
+                    - Range
+            matches:
+              - path:
+                  type: PathPrefix
+                  value: /library/streams
+            backendRefs:
+              - name: plex
+                port: 32400
+          - matches:
+              - path:
+                  type: PathPrefix
+                  value: /
+            backendRefs:
+              - name: plex
+                port: 32400
     persistence:
       config:
         existingClaim: "{{ .Release.Name }}"
