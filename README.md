@@ -74,7 +74,6 @@ Internal-only:
 - `https://media.cooney.site`
 - `https://requests.cooney.site`
 - `https://sonarr.cooney.site`
-- `https://stash.cooney.site`
 - `https://tautulli.cooney.site`
 - `https://grafana.cooney.site`
 - `https://prometheus.cooney.site`
