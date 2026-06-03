@@ -211,7 +211,7 @@ port: 80
 ssl: false
 ```
 
-Qui is only a management/UI layer and should not be used as the qBittorrent API endpoint for Sonarr, Radarr, Prowlarr, or Whisparr.
+Qui is only a management/UI layer and should not be used as the qBittorrent API endpoint for automation apps.
 
 ## Suspended app migrations
 
