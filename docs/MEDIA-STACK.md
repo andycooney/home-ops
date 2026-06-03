@@ -12,11 +12,9 @@ The media stack is managed from `kubernetes/apps/default`.
 | Prowlarr | Indexer management | `https://prowlarr.cooney.site` |
 | Radarr | Movie automation | `https://radarr.cooney.site` |
 | Sonarr | TV automation | `https://sonarr.cooney.site` |
-| Whisparr | Adult media automation | `https://whisparr.cooney.site` |
 | SABnzbd | Usenet downloader | `https://sabnzbd.cooney.site` |
 | qBittorrent | Torrent downloader | `https://qbittorrent.cooney.site` |
 | Qui | qBittorrent management UI | `https://qui.cooney.site` |
-| Stash | Adult media library | `https://stash.cooney.site` |
 
 ## External Seerr aliases
 
@@ -27,6 +25,25 @@ https://requests.cooney.online
 ```
 
 External routes should remain protected by Cloudflare Access unless a specific bypass is documented.
+
+## Plex
+
+Plex has two intentional access paths:
+
+```text
+https://plex.cooney.site          # canonical HTTPS URL through Envoy Gateway
+http://192.168.60.40:32400       # direct LAN LoadBalancer for native Plex clients
+```
+
+The direct LAN endpoint is advertised to Plex clients so Apple TV and other local clients can avoid the HTTP gateway/proxy path for discovery and playback. Details are in [`PLEX-OPERATIONS.md`](PLEX-OPERATIONS.md).
+
+## Sonarr and Radarr
+
+Sonarr and Radarr own media renames. Recyclarr should not manage media naming. Details are in [`SONARR-OPERATIONS.md`](SONARR-OPERATIONS.md).
+
+## SABnzbd
+
+SABnzbd runs behind Gluetun with PIA WireGuard configuration stored in 1Password-backed secrets. Details are in [`SABNZBD-PIA-WIREGUARD.md`](SABNZBD-PIA-WIREGUARD.md).
 
 ## Tautulli
 
@@ -58,7 +75,7 @@ kubectl -n default get pod,svc,pvc,httproute | grep tautulli
 
 ## Seerr aliases
 
-Seerr now has the following hostnames:
+Seerr has these hostnames:
 
 ```text
 seerr.cooney.site
@@ -77,7 +94,7 @@ Home Assistant also has:
 https://ha.cooney.site
 ```
 
-Validate after merge:
+Validate:
 
 ```sh
 curl -Ik -X GET https://ha.cooney.site
@@ -85,9 +102,7 @@ curl -Ik -X GET https://ha.cooney.site
 
 ## Plex PVC cleanup
 
-The Plex PVC should be checked for bloat after the route/app changes are merged.
-
-Recommended inventory commands:
+The Plex PVC should be checked for bloat periodically.
 
 ```sh
 PLEX_POD="$(kubectl -n default get pod -l app.kubernetes.io/name=plex -o jsonpath='{.items[0].metadata.name}')"
