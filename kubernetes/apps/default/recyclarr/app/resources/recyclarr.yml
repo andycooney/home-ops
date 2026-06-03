@@ -7,14 +7,6 @@ sonarr:
     delete_old_custom_formats: true
     media_management:
       propers_and_repacks: do_not_prefer
-    media_naming:
-      episodes:
-        anime: default
-        daily: default
-        rename: true
-        standard: default
-      season: default
-      series: plex-imdb
     quality_definition:
       type: series
     quality_profiles:
@@ -38,7 +30,6 @@ sonarr:
         assign_scores_to:
           - trash_id: 72dae194fc92bf828f32cde7744e51a1 # WEB-1080p
             score: 100
-
 radarr:
   movies:
     base_url: http://radarr.default.svc.cluster.local
@@ -46,11 +37,6 @@ radarr:
     delete_old_custom_formats: true
     media_management:
       propers_and_repacks: do_not_prefer
-    media_naming:
-      folder: plex-imdb
-      movie:
-        rename: true
-        standard: plex-imdb
     quality_definition:
       type: sqp-uhd
     quality_profiles:
