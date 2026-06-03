@@ -75,6 +75,8 @@ spec:
         annotations:
           lbipam.cilium.io/ips: 192.168.60.40
         externalTrafficPolicy: Local
+        labels:
+          bgp.cilium.io/advertise: "true"
     route:
       internal:
         hostnames:
