@@ -7,16 +7,25 @@ Plex is managed by `kubernetes/apps/default/plex/app/helmrelease.yaml`.
 ```text
 Canonical URL:      https://plex.cooney.site
 Direct LAN URL:     http://192.168.60.40:32400
+Cluster DNS URL:    http://plex.default.svc.cluster.local:32400
 Namespace:          default
 Service:            plex
 Transcode path:     /media/transcode
 ```
 
-Plex advertises both the canonical HTTPS URL and the direct LAN endpoint:
+Plex advertises the canonical HTTPS URL, the direct LAN endpoint, and the in-cluster service DNS name:
 
 ```text
-PLEX_ADVERTISE_URL=https://plex.cooney.site,http://192.168.60.40:32400
+PLEX_ADVERTISE_URL=https://plex.cooney.site:443,http://192.168.60.40:32400,http://plex.default.svc.cluster.local:32400
 ```
+
+Plex also allows unauthenticated discovery/access only from the trusted internal client subnet:
+
+```text
+PLEX_NO_AUTH_NETWORKS=172.16.1.0/24
+```
+
+This is intentional. Plex Web and Apple TV were able to authenticate at the API level, but Plex Web initially tested the bundled local server connection without a token and received `406 Not Acceptable`. Allowing no-auth for the Apple TV/client subnet restored Plex Web libraries, server settings, and Apple TV library visibility.
 
 The direct LAN endpoint is a Cilium-advertised LoadBalancer service. Native Plex clients should prefer it for local playback, which avoids the Envoy Gateway path and preserves local direct-play behavior.
 
@@ -49,7 +58,34 @@ Local native clients should be able to use:
 http://192.168.60.40:32400
 ```
 
-### Validate routing
+The in-cluster DNS URL is also advertised because this mirrors the known-good containerized Plex pattern used as a reference and helps Plex keep a stable internal service identity:
+
+```text
+http://plex.default.svc.cluster.local:32400
+```
+
+### Discovery model notes
+
+The working model intentionally does **not** use `hostNetwork` and does **not** use `ADVERTISE_IP`.
+
+During troubleshooting, host networking moved Plex off a Cilium pod IP, but it introduced extra node/LAN candidates and did not eliminate stale Kubernetes-local addresses from Plex Online resources. The final working configuration returned Plex to normal pod networking and aligned with the reference pattern:
+
+```text
+LoadBalancer VIP + externalTrafficPolicy: Local
+PLEX_ADVERTISE_URL with HTTPS hostname, LAN VIP, and cluster DNS URL
+PLEX_NO_AUTH_NETWORKS limited to 172.16.1.0/24
+```
+
+Known bad/suspicious client candidates seen during troubleshooting included:
+
+```text
+10.42.x.x:32400       # Kubernetes pod IP; not routable from LAN clients
+108.18.x.x:443        # auto-detected public WAN plex.direct candidate
+```
+
+The public WAN candidate was removed by disabling manual port mapping. The pod-IP candidate did not by itself prevent the final working configuration once the advertise URL and no-auth subnet were corrected.
+
+## Validate routing
 
 ```sh
 kubectl -n default get svc plex -o wide
@@ -79,7 +115,7 @@ PLEX_POD="$(kubectl -n default get pod -l app.kubernetes.io/name=plex -o jsonpat
 
 kubectl -n default exec "$PLEX_POD" -- sh -c '
   PREF="/config/Library/Application Support/Plex Media Server/Preferences.xml"
-  grep -oE "customConnections=\"[^\"]*\"|allowedNetworks=\"[^\"]*\"|LanNetworksBandwidth=\"[^\"]*\"|TranscoderTempDirectory=\"[^\"]*\"" "$PREF" || true
+  grep -oE "customConnections=\"[^\"]*\"|allowedNetworks=\"[^\"]*\"|LanNetworksBandwidth=\"[^\"]*\"|TranscoderTempDirectory=\"[^\"]*\"|ManualPortMappingMode=\"[^\"]*\"|ManualPortMappingPort=\"[^\"]*\"" "$PREF" || true
 '
 ```
 
@@ -87,12 +123,36 @@ Expected:
 
 ```text
 TranscoderTempDirectory="/media/transcode"
-customConnections="https://plex.cooney.site,http://192.168.60.40:32400"
-allowedNetworks=""
+customConnections="https://plex.cooney.site:443,http://192.168.60.40:32400,http://plex.default.svc.cluster.local:32400"
+allowedNetworks="172.16.1.0/24"
 LanNetworksBandwidth="172.16.1.0/24,192.168.42.0/24,192.168.60.0/24"
+ManualPortMappingMode="0"
 ```
 
-`allowedNetworks` should remain blank. It is the no-auth bypass list, not the normal LAN network list.
+`allowedNetworks` is the no-auth bypass list. Keep it limited to the trusted Apple TV/client subnet (`172.16.1.0/24`). Do not broaden it to the Kubernetes pod/service CIDRs.
+
+`LanNetworksBandwidth` is different from `allowedNetworks`: it controls which networks Plex treats as local for bandwidth/streaming decisions and can include the other internal LAN/storage ranges.
+
+## Validate Plex Online resources
+
+Use a fresh Plex Web token from `https://app.plex.tv/desktop/` when checking Plex Online resources. Do not paste token values into chat or docs.
+
+```sh
+WEB_TOKEN='paste_fresh_token_here'
+
+curl -fsS "https://plex.tv/api/resources?includeHttps=1&X-Plex-Token=$WEB_TOKEN" |
+  xmllint --format - |
+  sed -n '/<Device name="AndyPlex"/,/<\/Device>/p'
+```
+
+Good candidates include:
+
+```text
+192.168.60.40:32400
+plex.cooney.site:443
+```
+
+A `10.42.x.x:32400` candidate may appear from Kubernetes pod networking. Treat it as suspicious for LAN clients, but do not chase it alone if Plex Web, server settings, and Apple TV libraries are working.
 
 ## Media mounts
 
@@ -157,6 +217,33 @@ Stream location="direct"
 ```
 
 Plex request logs may still label some direct requests as `(WAN)`. Prefer the active session fields above for the playback decision.
+
+## Web and Apple TV visibility troubleshooting
+
+If Plex Web or Apple TV cannot see libraries, first confirm the server and token can access libraries:
+
+```sh
+curl -fsS "http://192.168.60.40:32400/library/sections?X-Plex-Token=$WEB_TOKEN" | xmllint --format -
+curl -fsS "http://192.168.60.40:32400/media/providers?X-Plex-Token=$WEB_TOKEN" | xmllint --format -
+```
+
+If those work but Plex Web shows no libraries/settings, check the browser console for connection bootstrap failures such as:
+
+```text
+[Connections] [Bundled] is unauthorized at http://192.168.60.40:32400/media/providers (Status 406)
+[Primary Server] Waiting for any eligible server
+```
+
+That symptom was fixed by the current `PLEX_ADVERTISE_URL` plus `PLEX_NO_AUTH_NETWORKS=172.16.1.0/24` model.
+
+Avoid these false starts unless new evidence requires them:
+
+```text
+Do not reclaim/reset Plex just because Web cannot see libraries if API tokens still work.
+Do not switch Plex to hostNetwork for this issue.
+Do not add ADVERTISE_IP; it did not resolve the stale resource candidates.
+Do not broaden allowedNetworks beyond the trusted client subnet.
+```
 
 ## TV metadata migration notes
 
