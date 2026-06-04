@@ -74,6 +74,8 @@ spec:
                   last="$${port}"
                   sleep "$${INTERVAL}"
                 done
+            env:
+              TZ: America/New_York
           gluetun:
             image:
               repository: ghcr.io/qdm12/gluetun
