@@ -26,7 +26,7 @@ spec:
               VPN_PORT_FORWARDING_STATUS_FILE: /tmp/gluetun/forwarded_port
               SERVER_NAMES: Server-12676-0a
               FIREWALL_INPUT_PORTS: "80"
-              FIREWALL_OUTBOUND_SUBNETS: 10.0.0.0/8,192.168.0.0/16,172.16.0.0/12
+              FIREWALL_OUTBOUND_SUBNETS: 10.42.0.0/16,10.43.0.0/16,192.168.0.0/16,172.16.0.0/12
               DNS_ADDRESS: 1.1.1.1
               DOT: "off"
               IPV6: "off"
