@@ -12,6 +12,9 @@ spec:
   values:
     controllers:
       plex:
+        pod:
+          hostNetwork: true
+          dnsPolicy: ClusterFirstWithHostNet
         annotations:
           reloader.stakater.com/auto: "true"
         containers:
