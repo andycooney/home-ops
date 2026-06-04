@@ -4,7 +4,7 @@
 
 SABnzbd runs behind Gluetun with custom PIA WireGuard configuration.
 
-The preferred tested endpoint was PIA Washington DC. New York and Washington DC both worked after regenerating fresh WireGuard configs.
+The active preferred endpoint is PIA Virginia / Ashburn. Washington DC and New York are retained as fallback configs.
 
 Bad or stale configs produced symptoms such as:
 
@@ -19,18 +19,24 @@ A healthy tunnel has a populated public IP and non-zero tunnel counters.
 
 ## 1Password fields
 
-The existing `pia` item in the `kubernetes` vault stores WireGuard configs:
+The existing `pia` item in the `kubernetes` vault stores WireGuard configs as concealed fields:
 
 ```text
+WG0_CONF_VA
 WG0_CONF_DC
 WG0_CONF_NY
 ```
+
+Virginia is the active SABnzbd config. DC and NY are fallback configs.
+
+If a WireGuard config is printed to a terminal or otherwise exposed, regenerate that config and replace the matching concealed field in 1Password.
 
 ## Kubernetes Secrets
 
 ExternalSecrets produce these Kubernetes Secrets:
 
 ```text
+sabnzbd-pia-wg-va-secret
 sabnzbd-pia-wg-dc-secret
 sabnzbd-pia-wg-ny-secret
 ```
@@ -40,6 +46,16 @@ Each contains:
 ```text
 wg0.conf
 ```
+
+SABnzbd currently mounts the Virginia secret.
+
+## Kill switch model
+
+SABnzbd runs with Gluetun as a sidecar. The app container shares the pod network namespace with Gluetun, and Gluetun's firewall is the primary leak-prevention mechanism.
+
+If the WireGuard tunnel is unhealthy, app egress should fail instead of falling back to the normal WAN path.
+
+A separate Kubernetes `vpn-guard` or pause controller is deferred unless Gluetun recovery proves insufficient or the app behaves poorly while network calls are blocked.
 
 ## Validation commands
 
@@ -62,6 +78,12 @@ Check app egress:
 ```sh
 kubectl -n default exec deploy/sabnzbd -c app -- \
   curl -fsS https://ipinfo.io/ip || true
+```
+
+Expected active region:
+
+```text
+Virginia / Ashburn
 ```
 
 Check logs:
@@ -96,14 +118,16 @@ Observed post-fix speeds were roughly:
 35-55 MB/s
 ```
 
-## Follow-up
+Virginia / Ashburn appeared faster than Washington DC during later testing and is now the active endpoint.
 
-Regenerate the final DC WireGuard config once more because private key material was printed during testing.
+## Rotation notes
 
-After regenerating and updating 1Password:
+DC, NY, and VA WireGuard configs were regenerated and stored as concealed fields in 1Password after earlier private key material was printed during testing.
+
+After regenerating and updating 1Password, force-sync the matching ExternalSecret and restart SABnzbd. For the active Virginia config:
 
 ```sh
-kubectl -n default annotate externalsecret sabnzbd-pia-wg-dc force-sync="$(date +%s)" --overwrite
+kubectl -n default annotate externalsecret sabnzbd-pia-wg-va force-sync="$(date +%s)" --overwrite
 kubectl -n default rollout restart deploy/sabnzbd
 kubectl -n default rollout status deploy/sabnzbd --timeout=3m
 ```
