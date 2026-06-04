@@ -18,11 +18,13 @@ spec:
               repository: ghcr.io/qdm12/gluetun
               tag: v3.41.1
             env:
-              VPN_SERVICE_PROVIDER: private internet access
-              VPN_TYPE: openvpn
-              OPENVPN_PROTOCOL: udp
-              PRIVATE_INTERNET_ACCESS_OPENVPN_ENCRYPTION_PRESET: strong
-              SERVER_REGIONS: US New York
+              VPN_SERVICE_PROVIDER: custom
+              VPN_TYPE: wireguard
+              WIREGUARD_CONF_SECRET_FILE: /gluetun/wireguard/wg0.conf
+              VPN_PORT_FORWARDING: "on"
+              VPN_PORT_FORWARDING_PROVIDER: private internet access
+              VPN_PORT_FORWARDING_STATUS_FILE: /tmp/gluetun/forwarded_port
+              SERVER_NAMES: Server-12676-0a
               FIREWALL_INPUT_PORTS: "80"
               FIREWALL_OUTBOUND_SUBNETS: 10.0.0.0/8,192.168.0.0/16,172.16.0.0/12
               DNS_ADDRESS: 1.1.1.1
@@ -115,6 +117,14 @@ spec:
           qbittorrent:
             gluetun:
               - path: /dev/net/tun
+      wireguard:
+        type: secret
+        name: qbittorrent-pia-wg-ca-ontario-secret
+        advancedMounts:
+          qbittorrent:
+            gluetun:
+              - path: /gluetun/wireguard/wg0.conf
+                subPath: wg0.conf
       config:
         existingClaim: "{{ .Release.Name }}"
       media:
