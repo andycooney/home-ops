@@ -59,6 +59,38 @@ kubectl -n openebs-system get pods
 kubectl get pvc -A | grep openebs
 ```
 
+## CloudNativePG storage
+
+The shared PostgreSQL platform is managed by CloudNativePG:
+
+```text
+namespace: database
+cluster: postgres-cnpg
+service: postgres-cnpg-rw.database.svc.cluster.local
+```
+
+CNPG creates PostgreSQL data PVCs from the `Cluster` resource's `spec.storage` field. Do not add a standalone `persistentvolumeclaim.yaml` for CNPG-managed database data.
+
+Validate:
+
+```sh
+kubectl -n database get cluster postgres-cnpg
+kubectl -n database get pods -l cnpg.io/cluster=postgres-cnpg
+kubectl -n database get pvc -l cnpg.io/cluster=postgres-cnpg
+```
+
+Current important consumer:
+
+```text
+Atuin -> database `atuin` on postgres-cnpg
+```
+
+See:
+
+```text
+docs/ATUIN-CNPG.md
+```
+
 ## VolSync / Kopia backups
 
 VolSync backups are written to a Kopia filesystem repository backed by the QNAP NFS export:
@@ -92,6 +124,8 @@ kubectl get replicationsource -A
 kubectl get replicationdestination -A
 kubectl get externalsecret -A | grep volsync
 ```
+
+`postgres-cnpg` does not currently use VolSync. CNPG-generated PVCs are not automatically covered by the repo's per-app VolSync component. Prefer adding CNPG-native database-aware backups for `postgres-cnpg` instead of raw PVC snapshots.
 
 ## Kopia UI
 
