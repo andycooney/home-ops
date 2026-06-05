@@ -23,7 +23,7 @@ The base platform currently includes:
 - OpenEBS hostpath storage
 - VolSync/Kopia backups to QNAP NFS
 - CloudNativePG shared PostgreSQL cluster
-- Observability stack
+- Observability stack with Gatus and SNMP Exporter
 - GitHub Actions Runner Controller
 - Renovate dependency update automation
 - Tuppr system upgrade controller with upgrades suspended
@@ -61,12 +61,15 @@ Internal-only:
 - `https://kopia.cooney.site`
 - `https://rook.cooney.site`
 - `https://atuin.cooney.site`
+- `https://gatus.cooney.site`
+- `https://status.cooney.site`
 - `https://home-assistant.cooney.site`
 - `https://hass.cooney.site`
 - `https://ha.cooney.site`
 - `https://zigbee.cooney.site`
 - `https://zwave.cooney.site`
 - `https://plex.cooney.site`
+- `https://bazarr.cooney.site`
 - `https://prowlarr.cooney.site`
 - `https://qbittorrent.cooney.site`
 - `https://qui.cooney.site`
@@ -104,9 +107,9 @@ Read these files instead of growing this README indefinitely.
 | Storage and backups | [`docs/STORAGE-BACKUP.md`](docs/STORAGE-BACKUP.md) | Rook/Ceph, OpenEBS, VolSync/Kopia, restore notes |
 | Secrets and credentials | [`docs/SECRETS.md`](docs/SECRETS.md) | 1Password, External Secrets, SOPS remnants, required items |
 | Atuin and CloudNativePG | [`docs/ATUIN-CNPG.md`](docs/ATUIN-CNPG.md) | Atuin deployment, shared CNPG database, client setup, and troubleshooting |
-| Observability | [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | Grafana, Prometheus, Alertmanager, probes |
+| Observability | [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | Grafana, Prometheus, Alertmanager, Gatus, SNMP Exporter, probes |
 | Home automation | [`docs/HOME-AUTOMATION.md`](docs/HOME-AUTOMATION.md) | Home Assistant, Mosquitto, Zigbee2MQTT, and Z-Wave rollout notes |
-| Media stack | [`docs/MEDIA-STACK.md`](docs/MEDIA-STACK.md) | Plex, Seerr, Tautulli, downloaders, and media app validation |
+| Media stack | [`docs/MEDIA-STACK.md`](docs/MEDIA-STACK.md) | Plex, Seerr, Tautulli, downloaders, Bazarr, and media app validation |
 | Application onboarding | [`docs/APP-ONBOARDING.md`](docs/APP-ONBOARDING.md) | Checklist for adding new apps |
 | Security checks | [`docs/SECURITY-CHECKS.md`](docs/SECURITY-CHECKS.md) | Secret scanning, Cloudflare Access checks, safe output handling |
 | Renovate | [`docs/RENOVATE.md`](docs/RENOVATE.md) | Renovate review flow, merge order, and Talos update handling |
