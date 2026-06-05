@@ -6,3 +6,11 @@ resources:
   - ./helmrelease.yaml
   - ./ocirepository.yaml
   - ./persistentvolumeclaim.yaml
+
+configMapGenerator:
+  - name: qbittorrent-scripts
+    files:
+      - port-sync.sh=./resources/port-sync.sh
+
+generatorOptions:
+  disableNameSuffixHash: true
