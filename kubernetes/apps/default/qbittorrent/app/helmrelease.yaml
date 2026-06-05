@@ -22,6 +22,12 @@ spec:
               - /scripts/port-sync.sh
             env:
               TZ: America/New_York
+            resources:
+              requests:
+                cpu: 1m
+                memory: 32Mi
+              limits:
+                memory: 128Mi
           gluetun:
             image:
               repository: ghcr.io/qdm12/gluetun
@@ -52,8 +58,8 @@ spec:
                 add: ["NET_ADMIN"]
             resources:
               requests:
-                cpu: 10m
-                memory: 128Mi
+                cpu: 5m
+                memory: 64Mi
               limits:
                 memory: 512Mi
           app:
@@ -93,8 +99,8 @@ spec:
               capabilities: {drop: ["ALL"]}
             resources:
               requests:
-                cpu: 100m
-                memory: 512Mi
+                cpu: 25m
+                memory: 256Mi
               limits:
                 memory: 2Gi
     defaultPodOptions:
