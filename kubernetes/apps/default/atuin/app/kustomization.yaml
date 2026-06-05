@@ -6,3 +6,10 @@ resources:
   - ./externalsecret.yaml
   - ./helmrelease.yaml
   - ./ocirepository.yaml
+
+configMapGenerator:
+  - name: atuin-configmap
+    files:
+      - server.toml=./resources/server.toml
+generatorOptions:
+  disableNameSuffixHash: true

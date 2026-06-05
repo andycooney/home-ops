@@ -83,6 +83,12 @@ spec:
           - name: envoy-internal
             namespace: network
     persistence:
+      config-file:
+        type: configMap
+        name: "{{ .Release.Name }}-configmap"
+        globalMounts:
+          - path: /config/server.toml
+            subPath: server.toml
       tmp:
         type: emptyDir
         globalMounts:
