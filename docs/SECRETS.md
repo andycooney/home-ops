@@ -168,6 +168,76 @@ ACTIONS_RUNNER_PRIVATE_KEY
 
 These values back the GitHub App used by GitHub Actions Runner Controller for `andycooney/home-ops`.
 
+## Atuin
+
+Vault:
+
+```text
+Kubernetes
+```
+
+Item:
+
+```text
+atuin
+```
+
+Required database fields for the shared CloudNativePG database:
+
+```text
+ATUIN_DB_NAME
+ATUIN_DB_USER
+ATUIN_DB_PASSWORD
+ATUIN_DB_HOST
+ATUIN_DB_PORT
+ATUIN_DB_URI
+```
+
+The database fields create:
+
+```text
+database/atuin-db-secret
+```
+
+and Atuin runtime consumes:
+
+```text
+default/atuin-secret
+```
+
+Runtime/user fields currently stored on the same item:
+
+```text
+username / ATUIN_USERNAME
+password / ATUIN_PASSWORD
+ATUIN_EMAIL
+ATUIN_KEY
+```
+
+`ATUIN_KEY` is the client sync encryption key. Keep it in 1Password because Atuin cannot recover it.
+
+Validate non-secret fields:
+
+```sh
+op item get atuin --vault kubernetes \
+  --fields label=ATUIN_DB_HOST,label=ATUIN_DB_NAME,label=ATUIN_DB_USER,label=ATUIN_DB_PORT
+```
+
+Validate Kubernetes secrets:
+
+```sh
+kubectl -n database get externalsecret atuin-db
+kubectl -n database get secret atuin-db-secret
+kubectl -n default get externalsecret atuin
+kubectl -n default get secret atuin-secret
+```
+
+Detailed runbook:
+
+```text
+docs/ATUIN-CNPG.md
+```
+
 ## Cluster Secrets component
 
 Shared cluster variables are generated through:
@@ -231,6 +301,7 @@ App/runtime secrets have been moved to 1Password and External Secrets:
 Flux GitHub deploy key -> op://kubernetes/flux-github-deploy-key/password
 cluster-secrets bootstrap values -> op://kubernetes/home-ops-bootstrap and op://kubernetes/cloudflare
 Cloudflare tunnel token -> op://kubernetes/cloudflare/CLOUDFLARE_TUNNEL_TOKEN
+Atuin database and client key -> op://kubernetes/atuin
 ```
 
 Do not delete the remaining Talos/bootstrap SOPS files unless the Talos recovery flow has been migrated and tested.
