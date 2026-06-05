@@ -50,7 +50,7 @@ spec:
                 sleep 2
               done
 
-              psql -v ON_ERROR_STOP=1 <<SQL
+              cat >/tmp/bootstrap.sql <<EOSQL
               DO \$\$
               BEGIN
                 IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${ATUIN_DB_USER}') THEN
@@ -65,4 +65,6 @@ spec:
               WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${ATUIN_DB_NAME}')\gexec
 
               GRANT ALL PRIVILEGES ON DATABASE "${ATUIN_DB_NAME}" TO "${ATUIN_DB_USER}";
-SQL
+EOSQL
+
+              psql -v ON_ERROR_STOP=1 -f /tmp/bootstrap.sql
