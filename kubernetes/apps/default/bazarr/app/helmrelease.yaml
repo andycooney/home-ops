@@ -80,17 +80,17 @@ spec:
     persistence:
       config:
         existingClaim: "{{ .Release.Name }}"
-      media:
+      movies:
         type: nfs
         server: storage.cooney.site
-        path: /media
+        path: /media/movies
         globalMounts:
-          - path: /media
-      unprocessed:
+          - path: /media/movies
+      tvshows:
         type: nfs
         server: storage.cooney.site
-        path: /unprocessed
+        path: /media/tvshows
         globalMounts:
-          - path: /unprocessed
+          - path: /media/tvshows
       tmp:
         type: emptyDir
