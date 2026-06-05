@@ -20,7 +20,6 @@ spec:
             env:
               ATUIN_HOST: "0.0.0.0"
               ATUIN_PORT: &port 80
-              ATUIN_OPEN_REGISTRATION: "true"
               TZ: America/New_York
               ATUIN_DB_URI:
                 valueFrom:
