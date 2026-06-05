@@ -50,21 +50,16 @@ spec:
                 sleep 2
               done
 
-              cat >/tmp/bootstrap.sql <<EOSQL
-              DO \$\$
-              BEGIN
-                IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${ATUIN_DB_USER}') THEN
-                  EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', '${ATUIN_DB_USER}', '${ATUIN_DB_PASSWORD}');
-                ELSE
-                  EXECUTE format('ALTER ROLE %I WITH PASSWORD %L', '${ATUIN_DB_USER}', '${ATUIN_DB_PASSWORD}');
-                END IF;
-              END
-              \$\$;
+              ROLE_EXISTS="$(psql -tAc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname='${ATUIN_DB_USER}'")"
+              if [ "${ROLE_EXISTS}" != "1" ]; then
+                psql -v ON_ERROR_STOP=1 -c "CREATE ROLE \"${ATUIN_DB_USER}\" LOGIN PASSWORD '${ATUIN_DB_PASSWORD}'"
+              else
+                psql -v ON_ERROR_STOP=1 -c "ALTER ROLE \"${ATUIN_DB_USER}\" WITH PASSWORD '${ATUIN_DB_PASSWORD}'"
+              fi
 
-              SELECT format('CREATE DATABASE %I OWNER %I', '${ATUIN_DB_NAME}', '${ATUIN_DB_USER}')
-              WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${ATUIN_DB_NAME}')\gexec
+              DB_EXISTS="$(psql -tAc "SELECT 1 FROM pg_database WHERE datname='${ATUIN_DB_NAME}'")"
+              if [ "${DB_EXISTS}" != "1" ]; then
+                psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"${ATUIN_DB_NAME}\" OWNER \"${ATUIN_DB_USER}\""
+              fi
 
-              GRANT ALL PRIVILEGES ON DATABASE "${ATUIN_DB_NAME}" TO "${ATUIN_DB_USER}";
-EOSQL
-
-              psql -v ON_ERROR_STOP=1 -f /tmp/bootstrap.sql
+              psql -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON DATABASE \"${ATUIN_DB_NAME}\" TO \"${ATUIN_DB_USER}\""
