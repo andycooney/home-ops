@@ -1,0 +1,29 @@
+---
+# yaml-language-server: $schema=https://k8s-schemas.home-operations.com/helm.toolkit.fluxcd.io/helmrelease_v2.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: &app snmp-exporter
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: snmp-exporter
+  interval: 1h
+  values:
+    fullnameOverride: *app
+
+    serviceMonitor:
+      enabled: true
+      params:
+        - name: udm
+          module:
+            - if_mib
+          target: 172.16.1.1
+          auth:
+            - public_v2
+      path: /snmp
+      scrapeTimeout: 10s
+      relabelings:
+        - sourceLabels:
+            - __param_target
+          targetLabel: instance
