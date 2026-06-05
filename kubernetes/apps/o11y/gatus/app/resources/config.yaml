@@ -1,0 +1,69 @@
+---
+connectivity:
+  checker:
+    target: 1.1.1.1:53
+    interval: 1m
+
+endpoints:
+  - name: Cloudflare DNS
+    group: connectivity
+    url: icmp://1.1.1.1
+    interval: 1m
+    conditions:
+      - "[CONNECTED] == true"
+
+  - name: Google DNS
+    group: connectivity
+    url: icmp://8.8.8.8
+    interval: 1m
+    conditions:
+      - "[CONNECTED] == true"
+
+  - name: Quad9 DNS
+    group: connectivity
+    url: icmp://9.9.9.9
+    interval: 1m
+    conditions:
+      - "[CONNECTED] == true"
+
+  - name: Atuin
+    group: internal
+    url: https://atuin.cooney.site/healthz
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+      - "[HEADER] atuin-version != empty"
+
+  - name: Flux
+    group: internal
+    url: https://flux.cooney.site
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+
+  - name: Plex
+    group: media
+    url: https://plex.cooney.site/identity
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+
+metrics: true
+
+storage:
+  type: sqlite
+  caching: true
+  path: ${GATUS_CONFIG_PATH}/gatus.db
+
+ui:
+  title: Status | Home Ops
+  header: Home Ops Status
+  link: https://github.com/andycooney/home-ops
+  buttons:
+    - name: Home Ops
+      link: https://github.com/andycooney/home-ops
+    - name: Grafana
+      link: https://grafana.cooney.site
+
+web:
+  port: ${GATUS_WEB_PORT}
