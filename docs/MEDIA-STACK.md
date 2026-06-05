@@ -12,6 +12,7 @@ The media stack is managed from `kubernetes/apps/default`.
 | Prowlarr | Indexer management | `https://prowlarr.cooney.site` |
 | Radarr | Movie automation | `https://radarr.cooney.site` |
 | Sonarr | TV automation | `https://sonarr.cooney.site` |
+| Bazarr | Subtitle automation | `https://bazarr.cooney.site` |
 | SABnzbd | Usenet downloader | `https://sabnzbd.cooney.site` |
 | qBittorrent | Torrent downloader | `https://qbittorrent.cooney.site` |
 | Qui | qBittorrent management UI | `https://qui.cooney.site` |
@@ -37,13 +38,139 @@ http://192.168.60.40:32400       # direct LAN LoadBalancer for native Plex clien
 
 The direct LAN endpoint is advertised to Plex clients so Apple TV and other local clients can avoid the HTTP gateway/proxy path for discovery and playback. Details are in [`PLEX-OPERATIONS.md`](PLEX-OPERATIONS.md).
 
+In-cluster service URL:
+
+```text
+http://plex.default.svc.cluster.local:32400
+```
+
 ## Sonarr and Radarr
 
 Sonarr and Radarr own media renames. Recyclarr should not manage media naming. Details are in [`SONARR-OPERATIONS.md`](SONARR-OPERATIONS.md).
 
+In-cluster service URLs:
+
+```text
+http://sonarr.default.svc.cluster.local
+http://radarr.default.svc.cluster.local
+```
+
+When another app asks for host and port separately:
+
+```text
+Host: sonarr.default.svc.cluster.local
+Port: 80
+SSL: off
+Base URL: blank
+
+Host: radarr.default.svc.cluster.local
+Port: 80
+SSL: off
+Base URL: blank
+```
+
+## Bazarr
+
+Bazarr is deployed for subtitle automation.
+
+```text
+namespace: default
+url: https://bazarr.cooney.site
+pvc: bazarr
+storage class: ceph-block
+size: 2Gi
+backup: VolSync/Kopia enabled
+```
+
+Bazarr intentionally mounts only the library paths it needs:
+
+```text
+/media/movies
+/media/tvshows
+```
+
+It does not mount the full `/media` tree and does not mount `/unprocessed`.
+
+Validation:
+
+```sh
+kubectl -n default rollout status deploy/bazarr --timeout=5m
+kubectl -n default get pod,pvc,svc,httproute -l app.kubernetes.io/name=bazarr
+curl -Ik https://bazarr.cooney.site/api/system/ping
+```
+
+Expected:
+
+```text
+HTTP/2 200
+```
+
+UI settings:
+
+```text
+Address: *
+Port: 6767
+Base URL: /
+Instance Name: Bazarr
+Hostname: bazarr.cooney.site
+Authentication: No Authentication
+CORS: disabled
+```
+
+Radarr integration:
+
+```text
+Address/Host: radarr.default.svc.cluster.local
+Port: 80
+SSL: off
+Base URL: blank
+API Key: from Radarr
+```
+
+Sonarr integration:
+
+```text
+Address/Host: sonarr.default.svc.cluster.local
+Port: 80
+SSL: off
+Base URL: blank
+API Key: from Sonarr
+```
+
+Path mappings should normally be unnecessary because Bazarr sees the same library paths as Radarr/Sonarr. If needed, use explicit same-to-same mappings:
+
+```text
+Movies:
+Radarr path: /media/movies
+Bazarr path: /media/movies
+
+TV:
+Sonarr path: /media/tvshows
+Bazarr path: /media/tvshows
+```
+
+Providers should be enabled conservatively. Start with English-only subtitles and a small set of providers such as OpenSubtitles.com, Podnapisi, and Addic7ed for TV.
+
+Notifications are intentionally disabled in Bazarr for now. Alertmanager should remain the central notification aggregator. Bazarr does not currently provide a clean native Alertmanager notification target. Gatus/Prometheus/Alertmanager should cover Bazarr health instead of Bazarr sending event notifications directly.
+
 ## SABnzbd
 
 SABnzbd runs behind Gluetun with PIA WireGuard configuration stored in 1Password-backed secrets. Details are in [`SABNZBD-PIA-WIREGUARD.md`](SABNZBD-PIA-WIREGUARD.md).
+
+In-cluster service URL:
+
+```text
+http://sabnzbd.default.svc.cluster.local
+```
+
+When another app asks for host and port separately:
+
+```text
+Host: sabnzbd.default.svc.cluster.local
+Port: 80
+SSL: off
+Base URL: blank
+```
 
 ## Tautulli
 
