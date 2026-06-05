@@ -12,6 +12,23 @@ spec:
   values:
     fullnameOverride: *app
 
+    envFrom:
+      - secretRef:
+          name: snmp-exporter-secret
+
+    extraArgs:
+      - --config.file=/etc/snmp_exporter/snmp.yml
+      - --config.file=/run/secrets/snmp-exporter/auth.yml
+      - --config.expand-environment-variables
+
+    extraSecretMounts:
+      - name: snmp-exporter-auth
+        secretName: snmp-exporter-auth
+        mountPath: /run/secrets/snmp-exporter
+        readOnly: true
+        defaultMode: 0440
+
+
     serviceMonitor:
       enabled: true
       params:
@@ -20,7 +37,7 @@ spec:
             - if_mib
           target: 172.16.1.1
           auth:
-            - public_v2
+            - home_v2
       path: /snmp
       scrapeTimeout: 10s
       relabelings:
