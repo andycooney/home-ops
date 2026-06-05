@@ -48,6 +48,13 @@ endpoints:
     conditions:
       - "[STATUS] == 200"
 
+  - name: VictoriaLogs
+    group: observability
+    url: https://victoria-logs.cooney.site/health
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+
 metrics: true
 
 storage:
