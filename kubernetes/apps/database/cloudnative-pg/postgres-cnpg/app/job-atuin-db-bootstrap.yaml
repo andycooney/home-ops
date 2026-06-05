@@ -9,7 +9,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: bootstrap
-          image: ghcr.io/cloudnative-pg/postgresql:17
+          image: ghcr.io/cloudnative-pg/postgresql:18
           env:
             - name: PGHOST
               value: postgres-cnpg-rw.database.svc.cluster.local
