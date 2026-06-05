@@ -29,7 +29,7 @@ spec:
       "kubernetesCollector.decolorizeFields": _msg
     resources:
       requests:
-        cpu: 25m
-        memory: 128Mi
+        cpu: 5m
+        memory: 64Mi
       limits:
-        memory: 512Mi
+        memory: 256Mi

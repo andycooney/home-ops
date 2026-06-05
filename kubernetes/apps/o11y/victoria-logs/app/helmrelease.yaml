@@ -27,10 +27,10 @@ spec:
         size: 20Gi
       resources:
         requests:
-          cpu: 50m
-          memory: 256Mi
+          cpu: 10m
+          memory: 128Mi
         limits:
-          memory: 1Gi
+          memory: 768Mi
       route:
         enabled: true
         annotations:
