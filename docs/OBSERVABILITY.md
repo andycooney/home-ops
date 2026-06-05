@@ -18,6 +18,8 @@ grafana-instance
 kube-prometheus-stack
 prometheus-adapter
 snmp-exporter
+victoria-logs
+victoria-logs-collector
 ```
 
 Validated internal URLs:
@@ -28,12 +30,14 @@ https://prometheus.cooney.site
 https://alertmanager.cooney.site
 https://gatus.cooney.site
 https://status.cooney.site
+https://victoria-logs.cooney.site
+https://logs.cooney.site
 ```
 
 ## Validation
 
 ```sh
-flux get ks -A | grep -E "o11y|blackbox|gatus|grafana|prometheus|alert|snmp"
+flux get ks -A | grep -E "o11y|blackbox|gatus|grafana|prometheus|alert|snmp|victoria"
 flux get hr -n o11y
 kubectl -n o11y get pods -o wide
 kubectl -n o11y get httproute
@@ -54,6 +58,8 @@ node-exporter                                     3/3 Running
 prometheus-adapter                                1/1 Running
 prometheus-kube-prometheus-stack-0                2/2 Running
 snmp-exporter                                     1/1 Running
+victoria-logs-0                                   1/1 Running
+victoria-logs-collector                           1/1 Running on each node
 ```
 
 ## HTTP checks
@@ -96,6 +102,19 @@ Expected:
 HTTP/2 200
 ```
 
+VictoriaLogs may return `400` for `HEAD /`. Use `/health` for checks:
+
+```sh
+curl -kL https://victoria-logs.cooney.site/health
+curl -kL https://logs.cooney.site/health
+```
+
+Expected:
+
+```text
+OK
+```
+
 ## Gatus
 
 Gatus is the internal status page.
@@ -130,6 +149,110 @@ Validate config and logs:
 kubectl -n o11y exec statefulset/gatus -c app -- cat /config/config.yaml
 kubectl -n o11y logs statefulset/gatus -c app --tail=120
 ```
+
+## VictoriaLogs
+
+VictoriaLogs is the centralized Kubernetes log search backend.
+
+```text
+namespace: o11y
+server: victoria-logs
+collector: victoria-logs-collector
+routes:
+  https://victoria-logs.cooney.site
+  https://logs.cooney.site
+storage: ceph-block PVC, 20Gi
+retention: 14d / 15GiB
+server resources: requests 10m/128Mi, limit 2Gi
+collector resources: requests 5m/64Mi, limit 256Mi
+```
+
+The deployment follows the `onedr0p/home-ops` two-part pattern:
+
+```text
+kubernetes/apps/o11y/victoria-logs/app        # VictoriaLogs server
+kubernetes/apps/o11y/victoria-logs/collector  # log collector
+```
+
+The collector remote-writes to:
+
+```text
+http://victoria-logs.o11y.svc.cluster.local:9428
+```
+
+The collector streams include these fields:
+
+```text
+kubernetes.pod_name
+kubernetes.pod_namespace
+kubernetes.container_name
+kubernetes.pod_labels.app.kubernetes.io/name
+```
+
+Validate objects:
+
+```sh
+kubectl -n o11y get hr,ocirepository,pod,pvc,svc,httproute,podmonitor,servicemonitor | grep -E 'victoria|NAME'
+kubectl -n o11y rollout status statefulset/victoria-logs --timeout=10m
+kubectl -n o11y rollout status daemonset/victoria-logs-collector --timeout=10m
+```
+
+Validate collector reachability to the server:
+
+```sh
+COLLECTOR="$(kubectl -n o11y get pod -l app.kubernetes.io/name=victoria-logs-collector -o jsonpath='{.items[0].metadata.name}')"
+kubectl -n o11y exec "$COLLECTOR" -- wget -qO- http://victoria-logs.o11y.svc.cluster.local:9428/health
+```
+
+Generate a smoke-test log line:
+
+```sh
+kubectl -n default run "log-test-$(date +%s)" \
+  --restart=Never \
+  --image=busybox:1.38.0 \
+  -- sh -c 'echo "victoria logs smoke test $(date -Iseconds)"'
+```
+
+Query for that smoke-test log:
+
+```sh
+kubectl -n o11y run "vlogs-query-$(date +%s)" \
+  --rm -i \
+  --restart=Never \
+  --image=curlimages/curl:8.11.1 \
+  -- sh -c 'curl -G -sS "http://victoria-logs.o11y.svc.cluster.local:9428/select/logsql/query" \
+    --data-urlencode "query=victoria logs smoke test" \
+    --data-urlencode "limit=20"'
+```
+
+A broad recent query should also return live cluster logs:
+
+```sh
+kubectl -n o11y run "vlogs-query-$(date +%s)" \
+  --rm -i \
+  --restart=Never \
+  --image=curlimages/curl:8.11.1 \
+  -- sh -c 'curl -G -sS "http://victoria-logs.o11y.svc.cluster.local:9428/select/logsql/query" \
+    --data-urlencode "query=*" \
+    --data-urlencode "limit=20"'
+```
+
+Check collector log-file visibility on each node:
+
+```sh
+for pod in $(kubectl -n o11y get pod -l app.kubernetes.io/name=victoria-logs-collector -o name); do
+  echo "===== $pod ====="
+  kubectl -n o11y exec "$pod" -- sh -c 'find /var/log/pods -type f 2>/dev/null | wc -l; find /var/log/containers -type l 2>/dev/null | wc -l'
+done
+```
+
+Check VictoriaLogs storage usage:
+
+```sh
+kubectl -n o11y exec victoria-logs-0 -- du -sh /storage
+```
+
+Successful sends from the collector are usually quiet. A quiet collector log does not mean ingestion is broken; prove ingestion with a query.
 
 ## SNMP Exporter
 
@@ -217,6 +340,7 @@ homebase.cooney.site:9100
 storage.cooney.site
 storage.cooney.site:2049
 UDM/gateway SNMP at 172.16.1.1
+VictoriaLogs internal log search
 ```
 
 ## Prometheus resource note
