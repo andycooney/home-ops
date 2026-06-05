@@ -172,6 +172,101 @@ SSL: off
 Base URL: blank
 ```
 
+## qBittorrent
+
+qBittorrent runs with Gluetun as the VPN sidecar and a `port-sync` sidecar that reads the PIA forwarded port from Gluetun and updates qBittorrent's listening port.
+
+```text
+namespace: default
+url: https://qbittorrent.cooney.site
+pvc: qbittorrent
+storage class: ceph-block
+vpn: Gluetun + PIA WireGuard
+forwarded port file: /tmp/gluetun/forwarded_port
+port sync script: kubernetes/apps/default/qbittorrent/app/resources/port-sync.sh
+```
+
+The `port-sync` script is stored outside the HelmRelease and mounted from a generated ConfigMap:
+
+```text
+kubernetes/apps/default/qbittorrent/app/resources/port-sync.sh
+```
+
+The generated script ConfigMap must disable Flux/Kustomize substitution, otherwise shell variables such as `${PORT_FILE}` are rendered as empty strings:
+
+```yaml
+generatorOptions:
+  disableNameSuffixHash: true
+  annotations:
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+```
+
+The current resource requests are intentionally low because the cluster is request-saturated:
+
+```text
+app:       requests 25m / 256Mi, limits 2Gi
+gluetun:   requests 5m / 64Mi,   limits 512Mi
+port-sync: requests 1m / 32Mi,   limits 128Mi
+```
+
+The HelmRelease timeout is set to `15m` to avoid rollback churn while the pod waits for scheduling or RWO PVC attachment.
+
+Validate qBittorrent:
+
+```sh
+kubectl -n default get pod -l app.kubernetes.io/name=qbittorrent
+kubectl -n default rollout status deploy/qbittorrent --timeout=15m
+kubectl -n default logs deploy/qbittorrent -c port-sync --tail=80
+kubectl -n default logs deploy/qbittorrent -c gluetun --tail=120
+```
+
+Expected `port-sync` startup lines:
+
+```text
+Starting qBittorrent forwarded-port sync
+Port file: /tmp/gluetun/forwarded_port
+qBittorrent URL: http://127.0.0.1:80
+```
+
+Expected after Gluetun obtains a forwarded port:
+
+```text
+Updating qBittorrent listening port from <old_port> to <forwarded_port>
+```
+
+Check the current forwarded port:
+
+```sh
+kubectl -n default exec deploy/qbittorrent -c gluetun -- cat /tmp/gluetun/forwarded_port
+```
+
+If a rollout gets stuck with an old pod holding the RWO PVC, suspend Helm and cleanly scale down before retrying:
+
+```sh
+flux suspend hr qbittorrent -n default
+kubectl -n default scale deploy/qbittorrent --replicas=0
+kubectl -n default delete pod -l app.kubernetes.io/name=qbittorrent --force --grace-period=0
+kubectl -n default describe pvc qbittorrent | grep -A5 "Used By"
+```
+
+Expected safe paused state:
+
+```text
+No qBittorrent pods
+PVC qbittorrent Bound
+Used By: <none>
+```
+
+Bring it back up:
+
+```sh
+flux resume hr qbittorrent -n default
+flux reconcile source git flux-system -n flux-system
+flux reconcile hr qbittorrent -n default --force --timeout=15m
+```
+
+Known cleanup item: issue #90 tracks replacing deprecated Gluetun DNS env vars (`DOT` and `DOT_IPV6`).
+
 ## Tautulli
 
 Tautulli was imported from `onedr0p/home-ops` and adapted to this cluster.
