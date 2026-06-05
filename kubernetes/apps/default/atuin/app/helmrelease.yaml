@@ -21,8 +21,12 @@ spec:
               ATUIN_HOST: "0.0.0.0"
               ATUIN_PORT: &port 80
               ATUIN_OPEN_REGISTRATION: "true"
-              ATUIN_DB_URI: sqlite:///config/atuin.db
               TZ: America/New_York
+              ATUIN_DB_URI:
+                valueFrom:
+                  secretKeyRef:
+                    name: atuin-secret
+                    key: ATUIN_DB_URI
             args:
               - start
             probes:
@@ -79,5 +83,7 @@ spec:
           - name: envoy-internal
             namespace: network
     persistence:
-      config:
-        existingClaim: "{{ .Release.Name }}"
+      tmp:
+        type: emptyDir
+        globalMounts:
+          - path: /tmp
