@@ -12,14 +12,9 @@ spec:
   values:
     fullnameOverride: *app
 
-    envFrom:
-      - secretRef:
-          name: snmp-exporter-secret
-
     extraArgs:
       - --config.file=/etc/snmp_exporter/snmp.yml
       - --config.file=/run/secrets/snmp-exporter/auth.yml
-      - --config.expand-environment-variables
 
     extraSecretMounts:
       - name: snmp-exporter-auth
