@@ -15,7 +15,7 @@ spec:
   commonMetadata:
     labels:
       app.kubernetes.io/name: postgres-cnpg
-  path: ./kubernetes/apps/database/cloudnative-pg/app/cluster
+  path: ./kubernetes/apps/database/cloudnative-pg/postgres-cnpg/app
   prune: true
   sourceRef:
     kind: GitRepository

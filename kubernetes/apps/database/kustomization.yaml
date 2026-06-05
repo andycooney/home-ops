@@ -4,4 +4,4 @@ resources:
   - ./namespace.yaml
   - ./postgres/ks.yaml
   - ./cloudnative-pg/ks.yaml
-  - ./cloudnative-pg/cluster/ks.yaml
+  - ./cloudnative-pg/postgres-cnpg/ks.yaml
