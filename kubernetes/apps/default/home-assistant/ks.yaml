@@ -3,17 +3,17 @@ kind: Kustomization
 metadata:
   name: home-assistant
 spec:
+  components:
+    - ../../../../components/volsync
+  dependsOn:
+    - name: rook-ceph-cluster
+      namespace: rook-ceph
+    - name: multus
+      namespace: kube-system
   targetNamespace: default
   commonMetadata:
     labels:
       app.kubernetes.io/name: home-assistant
-  components:
-    - ../../../../components/volsync
-  dependsOn:
-    - name: multus
-      namespace: kube-system
-    - name: rook-ceph-cluster
-      namespace: rook-ceph
   path: ./kubernetes/apps/default/home-assistant/app
   prune: true
   sourceRef:

@@ -4,6 +4,11 @@ kind: Kustomization
 metadata:
   name: prowlarr
 spec:
+  components:
+    - ../../../../components/volsync
+  dependsOn:
+    - name: rook-ceph-cluster
+      namespace: rook-ceph
   targetNamespace: default
   commonMetadata:
     labels:
