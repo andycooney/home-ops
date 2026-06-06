@@ -47,7 +47,7 @@ spec:
             securityContext:
               allowPrivilegeEscalation: false
               readOnlyRootFilesystem: true
-              capabilities: { drop: ["ALL"] }
+              capabilities: {drop: ["ALL"]}
             resources:
               requests:
                 cpu: 25m
@@ -94,3 +94,4 @@ spec:
           - path: /media/tvshows
       tmp:
         type: emptyDir
+  suspend: true

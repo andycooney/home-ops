@@ -72,3 +72,4 @@ spec:
           - path: /usr/src/app/store
       tmp:
         type: emptyDir
+  suspend: true

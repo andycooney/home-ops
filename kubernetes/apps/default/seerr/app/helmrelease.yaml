@@ -100,3 +100,4 @@ spec:
           - path: /app/config
       tmp:
         type: emptyDir
+  suspend: true

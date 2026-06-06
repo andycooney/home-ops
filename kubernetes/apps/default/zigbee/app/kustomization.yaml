@@ -4,4 +4,3 @@ resources:
   - ./externalsecret.yaml
   - ./helmrelease.yaml
   - ./ocirepository.yaml
-  - ./persistentvolumeclaim.yaml

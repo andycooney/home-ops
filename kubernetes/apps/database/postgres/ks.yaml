@@ -8,8 +8,6 @@ spec:
   commonMetadata:
     labels:
       app.kubernetes.io/name: postgres
-  components:
-    - ../../../../components/volsync
   dependsOn:
     - name: rook-ceph-cluster
       namespace: rook-ceph
@@ -26,6 +24,3 @@ spec:
   postBuild:
     substitute:
       APP: postgres
-      VOLSYNC_CLAIM: postgres
-      VOLSYNC_SECRET_KEY: postgres
-      VOLSYNC_CAPACITY: 60Gi
