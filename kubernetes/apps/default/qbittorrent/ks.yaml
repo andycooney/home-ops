@@ -5,15 +5,16 @@ kind: Kustomization
 metadata:
   name: qbittorrent
 spec:
+  components:
+    - ../../../../components/volsync
+    - ../../../../components/zeroscaler
+  dependsOn:
+    - name: rook-ceph-cluster
+      namespace: rook-ceph
   targetNamespace: default
   commonMetadata:
     labels:
       app.kubernetes.io/name: qbittorrent
-  components:
-    - ../../../../components/volsync
-  dependsOn:
-    - name: rook-ceph-cluster
-      namespace: rook-ceph
   path: ./kubernetes/apps/default/qbittorrent/app
   prune: true
   sourceRef:

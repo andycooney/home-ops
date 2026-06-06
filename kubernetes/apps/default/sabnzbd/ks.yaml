@@ -4,6 +4,12 @@ kind: Kustomization
 metadata:
   name: sabnzbd
 spec:
+  components:
+    - ../../../../components/volsync
+    - ../../../../components/zeroscaler
+  dependsOn:
+    - name: rook-ceph-cluster
+      namespace: rook-ceph
   targetNamespace: default
   commonMetadata:
     labels:
