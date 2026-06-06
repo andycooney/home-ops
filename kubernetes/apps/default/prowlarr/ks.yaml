@@ -5,6 +5,7 @@ metadata:
   name: prowlarr
 spec:
   components:
+    - ../../../../components/volsync-pvc
     - ../../../../components/volsync
   dependsOn:
     - name: rook-ceph-cluster
