@@ -22,6 +22,7 @@ The base platform currently includes:
 - Rook/Ceph block storage
 - OpenEBS hostpath storage
 - VolSync/Kopia backups to QNAP NFS
+- HPAScaleToZero / zeroscaler protection for NFS-dependent media apps
 - CloudNativePG shared PostgreSQL cluster
 - Observability stack with Gatus, SNMP Exporter, and VictoriaLogs
 - GitHub Actions Runner Controller
@@ -112,6 +113,7 @@ Read these files instead of growing this README indefinitely.
 | Observability | [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | Grafana, Prometheus, Alertmanager, Gatus, SNMP Exporter, VictoriaLogs, probes |
 | Home automation | [`docs/HOME-AUTOMATION.md`](docs/HOME-AUTOMATION.md) | Home Assistant, Mosquitto, Zigbee2MQTT, and Z-Wave rollout notes |
 | Media stack | [`docs/MEDIA-STACK.md`](docs/MEDIA-STACK.md) | Plex, Seerr, Tautulli, downloaders, Bazarr, qBittorrent, and media app validation |
+| NFS zeroscaler | [`docs/NFS-ZEROSCALER.md`](docs/NFS-ZEROSCALER.md) | HPAScaleToZero, NFS probe HPAs, protected apps, and outage-test procedure |
 | Application onboarding | [`docs/APP-ONBOARDING.md`](docs/APP-ONBOARDING.md) | Checklist for adding new apps |
 | Security checks | [`docs/SECURITY-CHECKS.md`](docs/SECURITY-CHECKS.md) | Secret scanning, Cloudflare Access checks, safe output handling |
 | Renovate | [`docs/RENOVATE.md`](docs/RENOVATE.md) | Renovate review flow, merge order, and Talos update handling |
