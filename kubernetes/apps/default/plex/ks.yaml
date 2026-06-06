@@ -6,7 +6,6 @@ metadata:
   name: plex
 spec:
   components:
-    - ../../../../components/zeroscaler
     - ../../../../components/volsync
   dependsOn:
     - name: rook-ceph-cluster
@@ -56,3 +55,4 @@ spec:
   interval: 30m
   retryInterval: 1m
   timeout: 5m
+  components: []

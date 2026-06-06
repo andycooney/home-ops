@@ -144,3 +144,4 @@ spec:
               - path: /gluetun/wireguard/wg0.conf
                 subPath: wg0.conf
                 readOnly: true
+  suspend: true

@@ -6,5 +6,4 @@ resources:
   - ./externalsecret-vpn.yaml
   - ./helmrelease.yaml
   - ./ocirepository.yaml
-  - ./persistentvolumeclaim.yaml
   - ./externalsecret-wg.yaml
