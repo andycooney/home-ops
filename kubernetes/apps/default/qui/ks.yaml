@@ -5,15 +5,16 @@ kind: Kustomization
 metadata:
   name: qui
 spec:
-  targetNamespace: default
-  commonMetadata:
-    labels:
-      app.kubernetes.io/name: qui
   components:
+    - ../../../../components/zeroscaler
     - ../../../../components/volsync
   dependsOn:
     - name: rook-ceph-cluster
       namespace: rook-ceph
+  targetNamespace: default
+  commonMetadata:
+    labels:
+      app.kubernetes.io/name: qui
   path: ./kubernetes/apps/default/qui/app
   prune: true
   sourceRef:

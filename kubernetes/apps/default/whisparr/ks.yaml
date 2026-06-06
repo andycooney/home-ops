@@ -5,15 +5,16 @@ kind: Kustomization
 metadata:
   name: whisparr
 spec:
-  targetNamespace: default
-  commonMetadata:
-    labels:
-      app.kubernetes.io/name: whisparr
   components:
+    - ../../../../components/zeroscaler
     - ../../../../components/volsync
   dependsOn:
     - name: rook-ceph-cluster
       namespace: rook-ceph
+  targetNamespace: default
+  commonMetadata:
+    labels:
+      app.kubernetes.io/name: whisparr
   path: ./kubernetes/apps/default/whisparr/app
   prune: true
   sourceRef:
