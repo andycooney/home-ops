@@ -18,7 +18,6 @@ spec:
           selector:
             matchLabels:
               job: ${ZEROSCALER_JOB_NAME:=nfs_probe}
-              instance: ${ZEROSCALER_INSTANCE:=storage.cooney.site:2049}
         target:
           type: Value
           value: "1"
