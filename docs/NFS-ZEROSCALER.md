@@ -144,11 +144,11 @@ spec:
       namespace: rook-ceph
 ```
 
-Use the app-level `app/kustomization.yaml` only for concrete app resources such as `helmrelease.yaml`, `ocirepository.yaml`, PVCs, ExternalSecrets, and config files.
+Use the app-level `app/kustomization.yaml` only for concrete app resources such as `helmrelease.yaml`, `ocirepository.yaml`, app-specific ExternalSecrets, config files, and special/additional PVCs. The standard app config PVC is created by `components/volsync`.
 
-Do not include `../../../../components/volsync` in both `ks.yaml` and `app/kustomization.yaml`; doing so double-renders resources such as `ExternalSecret/${APP}-volsync` and `ReplicationSource/${APP}`.
+Do not include `../../../../components/volsync` in both `ks.yaml` and `app/kustomization.yaml`; doing so double-renders resources such as `ExternalSecret/${APP}-volsync`, `PersistentVolumeClaim/${APP}`, `ReplicationDestination/${APP}-dst`, and `ReplicationSource/${APP}`.
 
-The broader VolSync consistency audit is tracked in issue #92.
+The broader VolSync consistency audit is tracked in issue #92. See `docs/VOLSYNC-MANAGED-PVCS.md` for the current managed-PVC pattern and migration procedure.
 
 ## Validate healthy state
 
