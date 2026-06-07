@@ -127,6 +127,58 @@ kubectl get externalsecret -A | grep volsync
 
 `postgres-cnpg` does not currently use VolSync. CNPG-generated PVCs are not automatically covered by the repo's per-app VolSync component. Prefer adding CNPG-native database-aware backups for `postgres-cnpg` instead of raw PVC snapshots.
 
+## VolSync-managed standard app PVCs
+
+The normal persistent-app pattern is now managed by the shared component:
+
+```text
+kubernetes/components/volsync
+```
+
+That component owns the standard app config PVC and the VolSync backup/restore resources:
+
+```text
+ExternalSecret/<app>-volsync
+PersistentVolumeClaim/<app>
+ReplicationDestination/<app>-dst
+ReplicationSource/<app>
+```
+
+The standard durable PVC uses Ceph by default:
+
+```text
+VOLSYNC_STORAGECLASS=ceph-block
+VOLSYNC_CAPACITY=5Gi
+```
+
+The common names default to the app name:
+
+```text
+VOLSYNC_CLAIM=${APP}
+VOLSYNC_SECRET_KEY=${APP}
+```
+
+Apps only need to override `VOLSYNC_CAPACITY` when the default `5Gi` is not correct.
+
+VolSync/Kopia cache and temporary mover PVCs are disposable scratch space and should use OpenEBS hostpath by default:
+
+```text
+VOLSYNC_CACHE_STORAGECLASS=openebs-hostpath
+```
+
+Do not move special/additional PVCs into the shared component. Keep them app-local. Example:
+
+```text
+home-assistant         -> standard /config PVC managed by components/volsync
+home-assistant-cache   -> /config/.venv cache PVC kept app-local
+```
+
+For the full pattern and production restore workflow, see:
+
+```text
+docs/VOLSYNC-MANAGED-PVCS.md
+```
+
 ## Kopia UI
 
 Kopia UI:
