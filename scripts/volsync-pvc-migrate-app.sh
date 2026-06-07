@@ -96,7 +96,16 @@ spec:
           set -eu
           mkdir -p /tmp/kopia-cache /tmp/kopia-logs
           kopia repository connect filesystem --path=/mnt/repository/${APP}
-          kopia snapshot list --all --json
+          kopia snapshot list --all --json | jq -r '
+            ["LOCAL_TIME", "SNAPSHOT_ID", "SIZE_BYTES", "RETENTION"],
+            (.[] | [
+              (.startTime | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 | strflocaltime("%Y-%m-%d %H:%M:%S %Z")),
+              .rootEntry.obj,
+              ((.stats.totalSize // 0) | tostring),
+              ((.retentionReason // []) | join(","))
+            ])
+            | @tsv
+          '
           sleep 3600
       volumeMounts:
         - name: repo
@@ -110,66 +119,15 @@ YAML
 
 kubectl -n "${NAMESPACE}" wait --for=condition=Ready "pod/${KOPIA_POD}" --timeout=120s || true
 
-echo "==> Waiting for snapshot JSON..."
+echo "==> Waiting for snapshot list..."
 for _ in {1..60}; do
-  if kubectl -n "${NAMESPACE}" logs "${KOPIA_POD}" 2>/dev/null | grep -q '"rootEntry"'; then
+  if kubectl -n "${NAMESPACE}" logs "${KOPIA_POD}" 2>/dev/null | grep -q 'SNAPSHOT_ID'; then
     break
   fi
   sleep 2
 done
 
-SNAPSHOT_LOG="$(mktemp)"
-kubectl -n "${NAMESPACE}" logs "${KOPIA_POD}" > "${SNAPSHOT_LOG}" || true
-
-python3 - "${SNAPSHOT_LOG}" <<'PYFMT'
-import json
-import sys
-from datetime import datetime
-from zoneinfo import ZoneInfo
-
-path = sys.argv[1]
-raw = open(path).read()
-
-start = raw.find("[")
-end = raw.rfind("]")
-
-if start == -1 or end == -1 or end < start:
-    print(raw)
-    raise SystemExit(0)
-
-data = json.loads(raw[start:end + 1])
-
-try:
-    tz = ZoneInfo("America/New_York")
-except Exception:
-    tz = None
-
-print()
-print(f"{'LOCAL_TIME':<24} {'SNAPSHOT_ID':<40} {'SIZE':<12} {'RETENTION'}")
-print("-" * 105)
-
-for item in data:
-    utc = item.get("startTime", "")
-    snap = ((item.get("rootEntry") or {}).get("obj")) or item.get("id") or ""
-    size = ((item.get("stats") or {}).get("totalSize")) or ""
-    retention = ",".join(item.get("retentionReason") or [])
-
-    local = utc
-    try:
-        if "." in utc:
-            base, _ = utc.split(".", 1)
-            utc_parse = base + "Z"
-        else:
-            utc_parse = utc
-        dt = datetime.fromisoformat(utc_parse.replace("Z", "+00:00"))
-        local = dt.astimezone(tz).strftime("%Y-%m-%d %H:%M:%S %Z") if tz else dt.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-    except Exception:
-        pass
-
-    print(f"{local:<24} {snap:<40} {str(size):<12} {retention}")
-PYFMT
-
-rm -f "${SNAPSHOT_LOG}"
+kubectl -n "${NAMESPACE}" logs "${KOPIA_POD}" || true
 
 echo
 read -r -p "Paste snapshot root/ID to restore for ${APP}: " SNAPSHOT_ID
