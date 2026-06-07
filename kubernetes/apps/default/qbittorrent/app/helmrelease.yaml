@@ -174,4 +174,3 @@ spec:
           - path: /unprocessed
       tmp:
         type: emptyDir
-  suspend: true
