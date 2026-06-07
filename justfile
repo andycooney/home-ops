@@ -36,3 +36,11 @@ configure:
 [group('template')]
 init:
     just template init
+
+# Migrate one app's standard VolSync PVC by selecting/restoring a Kopia snapshot.
+volsync-migrate app namespace="default":
+    scripts/volsync-pvc-migrate-app.sh {{app}} {{namespace}}
+
+# Update Git so an app is resumed after VolSync PVC migration.
+volsync-resume app:
+    scripts/volsync-pvc-resume-app-git.sh {{app}}
