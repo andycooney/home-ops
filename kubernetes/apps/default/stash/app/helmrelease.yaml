@@ -118,4 +118,3 @@ spec:
           - path: /generated
       tmp:
         type: emptyDir
-  suspend: true
