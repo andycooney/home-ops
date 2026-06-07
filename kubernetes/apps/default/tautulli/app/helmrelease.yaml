@@ -83,4 +83,3 @@ spec:
         existingClaim: tautulli
       tmp:
         type: emptyDir
-  suspend: true
