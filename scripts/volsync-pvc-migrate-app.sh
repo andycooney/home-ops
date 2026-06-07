@@ -98,6 +98,7 @@ spec:
           kopia repository connect filesystem --path=/mnt/repository/${APP}
           echo SNAPSHOT_JSON_BEGIN
           kopia snapshot list --all --json
+          echo
           echo SNAPSHOT_JSON_END
           sleep 3600
       volumeMounts:
