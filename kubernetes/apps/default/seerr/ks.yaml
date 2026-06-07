@@ -27,6 +27,3 @@ spec:
   postBuild:
     substitute:
       APP: seerr
-      VOLSYNC_CLAIM: seerr
-      VOLSYNC_SECRET_KEY: seerr
-      VOLSYNC_CAPACITY: 5Gi

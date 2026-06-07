@@ -28,5 +28,3 @@ spec:
   postBuild:
     substitute:
       APP: sonarr
-      VOLSYNC_CLAIM: sonarr
-      VOLSYNC_SECRET_KEY: sonarr

@@ -27,6 +27,3 @@ spec:
   postBuild:
     substitute:
       APP: zigbee
-      VOLSYNC_CLAIM: zigbee
-      VOLSYNC_SECRET_KEY: zigbee
-      VOLSYNC_CAPACITY: 5Gi

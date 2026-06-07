@@ -28,5 +28,3 @@ spec:
   postBuild:
     substitute:
       APP: sabnzbd
-      VOLSYNC_CLAIM: sabnzbd
-      VOLSYNC_SECRET_KEY: sabnzbd

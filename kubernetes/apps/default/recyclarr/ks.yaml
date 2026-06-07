@@ -24,6 +24,4 @@ spec:
   postBuild:
     substitute:
       APP: recyclarr
-      VOLSYNC_CLAIM: recyclarr
-      VOLSYNC_SECRET_KEY: recyclarr
       VOLSYNC_CAPACITY: 1Gi

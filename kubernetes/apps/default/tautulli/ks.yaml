@@ -27,6 +27,3 @@ spec:
   postBuild:
     substitute:
       APP: tautulli
-      VOLSYNC_CLAIM: tautulli
-      VOLSYNC_SECRET_KEY: tautulli
-      VOLSYNC_CAPACITY: 5Gi

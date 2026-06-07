@@ -25,6 +25,3 @@ spec:
   postBuild:
     substitute:
       APP: zwave
-      VOLSYNC_CLAIM: zwave
-      VOLSYNC_SECRET_KEY: zwave
-      VOLSYNC_CAPACITY: 5Gi

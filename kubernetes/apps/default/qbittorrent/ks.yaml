@@ -28,6 +28,3 @@ spec:
   postBuild:
     substitute:
       APP: qbittorrent
-      VOLSYNC_CLAIM: qbittorrent
-      VOLSYNC_SECRET_KEY: qbittorrent
-      VOLSYNC_CAPACITY: 5Gi

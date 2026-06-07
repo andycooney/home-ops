@@ -28,6 +28,4 @@ spec:
   postBuild:
     substitute:
       APP: stash
-      VOLSYNC_CLAIM: stash
-      VOLSYNC_SECRET_KEY: stash
       VOLSYNC_CAPACITY: 10Gi

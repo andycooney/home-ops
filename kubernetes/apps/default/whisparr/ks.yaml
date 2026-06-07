@@ -28,6 +28,3 @@ spec:
   postBuild:
     substitute:
       APP: whisparr
-      VOLSYNC_CLAIM: whisparr
-      VOLSYNC_SECRET_KEY: whisparr
-      VOLSYNC_CAPACITY: 5Gi

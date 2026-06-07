@@ -28,5 +28,3 @@ spec:
   postBuild:
     substitute:
       APP: radarr
-      VOLSYNC_CLAIM: radarr
-      VOLSYNC_SECRET_KEY: radarr
