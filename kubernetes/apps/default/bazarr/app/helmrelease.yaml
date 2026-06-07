@@ -94,4 +94,3 @@ spec:
           - path: /media/tvshows
       tmp:
         type: emptyDir
-  suspend: true
