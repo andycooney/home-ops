@@ -63,4 +63,3 @@ spec:
             subPath: recyclarr.yml
       tmp:
         type: emptyDir
-  suspend: true
