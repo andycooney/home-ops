@@ -3,6 +3,7 @@ set -euo pipefail
 
 APP="${1:-}"
 NAMESPACE="${2:-default}"
+LOCAL_TZ="${LOCAL_TZ:-America/New_York}"
 
 if [[ -z "${APP}" ]]; then
   echo "Usage: $0 <app> [namespace]"
@@ -24,6 +25,7 @@ delete_pod() {
 
 echo "==> App: ${APP}"
 echo "==> Namespace: ${NAMESPACE}"
+echo "==> Local timezone: ${LOCAL_TZ}"
 
 echo
 echo "==> Current status"
@@ -74,16 +76,14 @@ spec:
           value: kopia
         - name: HOME
           value: /tmp
+        - name: TZ
+          value: ${LOCAL_TZ}
         - name: KOPIA_CONFIG_PATH
           value: /tmp/kopia.config
         - name: KOPIA_CACHE_DIRECTORY
           value: /tmp/kopia-cache
         - name: KOPIA_LOG_DIR
           value: /tmp/kopia-logs
-        - name: TZ
-          value: America/New_York
-        - name: TZ
-          value: America/New_York
         - name: KOPIA_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -110,8 +110,9 @@ YAML
 
 kubectl -n "${NAMESPACE}" wait --for=condition=Ready "pod/${KOPIA_POD}" --timeout=120s || true
 
-for i in {1..30}; do
-  if kubectl -n "${NAMESPACE}" logs "${KOPIA_POD}" 2>/dev/null | grep -q '\['; then
+echo "==> Waiting for snapshot JSON..."
+for _ in {1..60}; do
+  if kubectl -n "${NAMESPACE}" logs "${KOPIA_POD}" 2>/dev/null | grep -q '"rootEntry"'; then
     break
   fi
   sleep 2
@@ -124,6 +125,7 @@ python3 - "${SNAPSHOT_LOG}" <<'PYFMT'
 import json
 import sys
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 path = sys.argv[1]
 raw = open(path).read()
@@ -136,6 +138,11 @@ if start == -1 or end == -1 or end < start:
     raise SystemExit(0)
 
 data = json.loads(raw[start:end + 1])
+
+try:
+    tz = ZoneInfo("America/New_York")
+except Exception:
+    tz = None
 
 print()
 print(f"{'LOCAL_TIME':<24} {'SNAPSHOT_ID':<40} {'SIZE':<12} {'RETENTION'}")
@@ -155,7 +162,7 @@ for item in data:
         else:
             utc_parse = utc
         dt = datetime.fromisoformat(utc_parse.replace("Z", "+00:00"))
-        local = dt.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+        local = dt.astimezone(tz).strftime("%Y-%m-%d %H:%M:%S %Z") if tz else dt.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     except Exception:
         pass
 
@@ -190,7 +197,7 @@ flux reconcile ks "${APP}" -n "${NAMESPACE}" --with-source || true
 
 echo
 echo "==> Waiting for new PVC to become Bound"
-for i in {1..60}; do
+for _ in {1..60}; do
   phase="$(kubectl -n "${NAMESPACE}" get pvc "${APP}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
   echo "PVC phase: ${phase:-missing}"
   [[ "${phase}" == "Bound" ]] && break
@@ -230,6 +237,8 @@ spec:
           value: kopia
         - name: HOME
           value: /tmp
+        - name: TZ
+          value: ${LOCAL_TZ}
         - name: KOPIA_CONFIG_PATH
           value: /tmp/kopia.config
         - name: KOPIA_CACHE_DIRECTORY
@@ -274,6 +283,7 @@ spec:
         path: /home-ops-backups
 YAML
 
+kubectl -n "${NAMESPACE}" wait --for=condition=Ready "pod/${RESTORE_POD}" --timeout=120s || true
 kubectl -n "${NAMESPACE}" logs -f "${RESTORE_POD}"
 
 echo
