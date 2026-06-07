@@ -27,6 +27,4 @@ spec:
   postBuild:
     substitute:
       APP: home-assistant
-      VOLSYNC_CLAIM: home-assistant
-      VOLSYNC_SECRET_KEY: home-assistant
       VOLSYNC_CAPACITY: 10Gi

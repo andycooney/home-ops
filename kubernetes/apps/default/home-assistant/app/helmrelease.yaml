@@ -130,4 +130,3 @@ spec:
           - path: /config/.venv
       tmp:
         type: emptyDir
-  suspend: true
