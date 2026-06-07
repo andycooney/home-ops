@@ -11,7 +11,6 @@ fi
 
 KOPIA_POD="${APP}-kopia-debug"
 RESTORE_POD="${APP}-restore-manual"
-CHECK_POD="${APP}-config-check"
 
 confirm() {
   local prompt="$1"
@@ -83,6 +82,8 @@ spec:
           value: /tmp/kopia-logs
         - name: TZ
           value: America/New_York
+        - name: TZ
+          value: America/New_York
         - name: KOPIA_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -107,7 +108,14 @@ spec:
         path: /home-ops-backups
 YAML
 
-sleep 5
+kubectl -n "${NAMESPACE}" wait --for=condition=Ready "pod/${KOPIA_POD}" --timeout=120s || true
+
+for i in {1..30}; do
+  if kubectl -n "${NAMESPACE}" logs "${KOPIA_POD}" 2>/dev/null | grep -q '\['; then
+    break
+  fi
+  sleep 2
+done
 
 SNAPSHOT_LOG="$(mktemp)"
 kubectl -n "${NAMESPACE}" logs "${KOPIA_POD}" > "${SNAPSHOT_LOG}" || true
@@ -115,7 +123,7 @@ kubectl -n "${NAMESPACE}" logs "${KOPIA_POD}" > "${SNAPSHOT_LOG}" || true
 python3 - "${SNAPSHOT_LOG}" <<'PYFMT'
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 
 path = sys.argv[1]
 raw = open(path).read()
@@ -130,22 +138,28 @@ if start == -1 or end == -1 or end < start:
 data = json.loads(raw[start:end + 1])
 
 print()
-print(f"{'LOCAL_TIME':<24} {'UTC_TIME':<24} {'SNAPSHOT_ID':<40} {'SIZE'}")
+print(f"{'LOCAL_TIME':<24} {'SNAPSHOT_ID':<40} {'SIZE':<12} {'RETENTION'}")
 print("-" * 105)
 
 for item in data:
     utc = item.get("startTime", "")
     snap = ((item.get("rootEntry") or {}).get("obj")) or item.get("id") or ""
     size = ((item.get("stats") or {}).get("totalSize")) or ""
+    retention = ",".join(item.get("retentionReason") or [])
 
     local = utc
     try:
-        dt = datetime.fromisoformat(utc.replace("Z", "+00:00"))
+        if "." in utc:
+            base, _ = utc.split(".", 1)
+            utc_parse = base + "Z"
+        else:
+            utc_parse = utc
+        dt = datetime.fromisoformat(utc_parse.replace("Z", "+00:00"))
         local = dt.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     except Exception:
         pass
 
-    print(f"{local:<24} {utc:<24} {snap:<40} {size}")
+    print(f"{local:<24} {snap:<40} {str(size):<12} {retention}")
 PYFMT
 
 rm -f "${SNAPSHOT_LOG}"
