@@ -108,4 +108,3 @@ spec:
         existingClaim: zigbee
         globalMounts:
           - path: /config
-  suspend: true
