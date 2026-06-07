@@ -257,11 +257,11 @@ spec:
           kopia snapshot restore "\${SNAPSHOT_ID}" /config
           echo RESTORE_DONE
           echo
-          echo "Restored size:"
-          du -sh /config
-          echo
           echo "Restored file sample:"
           find /config -maxdepth 3 -type f | sort | head -150
+          echo
+          echo "Restored size:"
+          du -sh /config
       volumeMounts:
         - name: config
           mountPath: /config
