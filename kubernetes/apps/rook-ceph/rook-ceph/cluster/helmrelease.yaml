@@ -10,6 +10,12 @@ spec:
     name: rook-ceph-cluster
   interval: 1h
   timeout: 20m
+  upgrade:
+    cleanupOnFail: true
+    crds: CreateReplace
+    strategy:
+      name: RetryOnFailure
+      retryInterval: 5m
   values:
     cephClusterSpec:
       cleanupPolicy:
