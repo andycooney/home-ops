@@ -6,12 +6,14 @@ metadata:
   name: atuin
 spec:
   targetNamespace: default
-  dependsOn:
-    - name: postgres-cnpg
-      namespace: database
   commonMetadata:
     labels:
       app.kubernetes.io/name: atuin
+  components:
+    - ../../../../components/volsync
+  postBuild:
+    substitute:
+      APP: atuin
   path: ./kubernetes/apps/default/atuin/app
   prune: true
   sourceRef:
