@@ -20,9 +20,9 @@ log lvl msg *args:
     gum log -t rfc3339 -s -l "{{ lvl }}" "{{ msg }}" {{ args }}
 
 [doc('Run a read-only post-change sanity check')]
-[group('kubernetes')]
+[group('kube')]
 sanity-check:
-    ./scripts/sanity-check.sh
+    just kube sanity-check
 
 [group: 'volsync']
 mod? volsync 'volsync.just'
