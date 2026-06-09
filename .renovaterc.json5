@@ -58,7 +58,7 @@
       ignoreTests: false,
     },
     {
-      description: "Auto-merge Grafana dashboards",
+      description: "Keep Grafana dashboard updates manual",
       matchDatasources: ["custom.grafana-dashboards"],
       matchUpdateTypes: ["major"],
       automerge: false,
@@ -66,7 +66,7 @@
       ignoreTests: true,
     },
     {
-      description: "Auto-merge Renovate Presets",
+      description: "Keep Renovate preset updates manual",
       matchManagers: ["renovate-config"],
       matchUpdateTypes: ["minor", "patch"],
       automerge: false,
