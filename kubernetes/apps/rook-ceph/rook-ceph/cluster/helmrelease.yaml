@@ -15,7 +15,6 @@ spec:
     crds: CreateReplace
     strategy:
       name: RetryOnFailure
-    retryInterval: 5m
   values:
     cephClusterSpec:
       cleanupPolicy:
