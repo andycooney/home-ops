@@ -40,6 +40,12 @@ spec:
         osd:
           limits:
             memory: 8Gi # Required for bootstrap
+        exporter:
+          requests:
+            cpu: 25m
+        logcollector:
+          requests:
+            cpu: 25m
       storage:
         useAllDevices: false
         useAllNodes: true
