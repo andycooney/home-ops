@@ -24,5 +24,10 @@ log lvl msg *args:
 sanity-check:
     just kube sanity-check
 
+[doc('Show a concise Flux/Kubernetes health overview')]
+[group('kube')]
+flux-overview:
+    just kube flux-overview
+
 [group: 'volsync']
 mod? volsync 'volsync.just'
