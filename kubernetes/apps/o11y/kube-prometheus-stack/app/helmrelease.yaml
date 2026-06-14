@@ -44,6 +44,8 @@ spec:
       enabled: false
     defaultRules:
       disabled:
+        KubeMemoryOvercommit: true
+        KubeCPUOvercommit: true
         KubeHpaMaxedOut: true
     prometheus:
       route:
@@ -90,6 +92,36 @@ spec:
         matchLabels:
           dashboards: grafana
     additionalPrometheusRulesMap:
+      kube-overcommit-rules:
+        groups:
+          - name: kube-overcommit-custom
+            rules:
+              - alert: KubeCPUOvercommit
+                annotations:
+                  description: Cluster {{ $labels.cluster }} has overcommitted CPU requests above 99% of allocatable CPU.
+                  runbook_url: https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubecpuovercommit
+                  summary: Cluster has overcommitted CPU resource requests.
+                expr: |-
+                  sum(namespace_cpu:kube_pod_container_resource_requests:sum{job="kube-state-metrics"}) by (cluster)
+                    /
+                  sum(kube_node_status_allocatable{job="kube-state-metrics",resource="cpu"}) by (cluster)
+                    > 0.99
+                for: 10m
+                labels:
+                  severity: warning
+              - alert: KubeMemoryOvercommit
+                annotations:
+                  description: Cluster {{ $labels.cluster }} has overcommitted memory requests above 99% of allocatable memory.
+                  runbook_url: https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubememoryovercommit
+                  summary: Cluster has overcommitted memory resource requests.
+                expr: |-
+                  sum(namespace_memory:kube_pod_container_resource_requests:sum{job="kube-state-metrics"}) by (cluster)
+                    /
+                  sum(kube_node_status_allocatable{job="kube-state-metrics",resource="memory"}) by (cluster)
+                    > 0.99
+                for: 10m
+                labels:
+                  severity: warning
       kube-hpa-rules:
         groups:
           - name: kube-hpa-custom
