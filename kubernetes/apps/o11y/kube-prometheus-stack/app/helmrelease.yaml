@@ -42,6 +42,9 @@ spec:
           component: kube-apiserver # etcd runs on control plane nodes
     kubeProxy:
       enabled: false
+    defaultRules:
+      disabled:
+        KubeHpaMaxedOut: true
     prometheus:
       route:
         main:
@@ -87,6 +90,28 @@ spec:
         matchLabels:
           dashboards: grafana
     additionalPrometheusRulesMap:
+      kube-hpa-rules:
+        groups:
+          - name: kube-hpa-custom
+            rules:
+              - alert: KubeHpaMaxedOut
+                annotations:
+                  description: HPA {{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} has been running at max replicas for longer than 15 minutes on cluster {{ $labels.cluster }}.
+                  runbook_url: https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubehpamaxedout
+                  summary: HPA is running at max replicas
+                expr: |-
+                  (
+                    kube_horizontalpodautoscaler_status_current_replicas{job="kube-state-metrics", namespace=~".*"}
+                      ==
+                    kube_horizontalpodautoscaler_spec_max_replicas{job="kube-state-metrics", namespace=~".*"}
+                  )
+                  and on (namespace, horizontalpodautoscaler, cluster) (
+                    kube_horizontalpodautoscaler_spec_max_replicas{job="kube-state-metrics", namespace=~".*"}
+                      > 1
+                  )
+                for: 15m
+                labels:
+                  severity: warning
       dockerhub-rules:
         groups:
           - name: dockerhub
