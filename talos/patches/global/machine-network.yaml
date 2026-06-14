@@ -6,5 +6,5 @@ machine:
     interfaces:
       - interface: eno1
         vlans:
-          - vlanId: 777
+          - vlanId: 666
             dhcp: false
