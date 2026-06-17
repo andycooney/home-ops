@@ -31,14 +31,11 @@ spec:
                 memory: 128Mi
           pia-port-forward:
             image:
-              repository: alpine
-              tag: "3.20"
+              repository: ghcr.io/andycooney/qbittorrent-pia-port-forward
+              tag: sha-2ce6208d13b2
             command:
               - /bin/sh
-              - -c
-              - |
-                apk add --no-cache curl jq iproute2 ca-certificates coreutils
-                exec /bin/sh /scripts/pia-port-forward.sh
+              - /scripts/pia-port-forward.sh
             env:
               PORT_FILE: /tmp/gluetun/forwarded_port
               RENEW_SECONDS: "43200"
