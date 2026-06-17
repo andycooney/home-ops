@@ -108,6 +108,7 @@ Read these files instead of growing this README indefinitely.
 | Bootstrap and recovery | [`docs/BOOTSTRAP-RECOVERY.md`](docs/BOOTSTRAP-RECOVERY.md) | Talos bootstrap, Flux recovery, rebuild flow |
 | Core platform apps | [`docs/CORE-PLATFORM.md`](docs/CORE-PLATFORM.md) | Platform app inventory and validation commands |
 | Networking and external access | [`docs/NETWORKING-ACCESS.md`](docs/NETWORKING-ACCESS.md) | DNS, gateways, BGP, Cloudflare Tunnel, Cloudflare Access |
+| Switch and Talos network plan | [`docs/SWITCHING-TALOS-NETWORK-PLAN.md`](docs/SWITCHING-TALOS-NETWORK-PLAN.md) | UniFi switch port profiles, firewall lists/rules, and future Talos/Kubernetes network allocation |
 | Storage and backups | [`docs/STORAGE-BACKUP.md`](docs/STORAGE-BACKUP.md) | Rook/Ceph, OpenEBS, VolSync/Kopia, restore notes |
 | VolSync-managed PVCs | [`docs/VOLSYNC-MANAGED-PVCS.md`](docs/VOLSYNC-MANAGED-PVCS.md) | Shared VolSync component, restore-aware PVC pattern, and app migration helpers |
 | Secrets and credentials | [`docs/SECRETS.md`](docs/SECRETS.md) | 1Password, External Secrets, SOPS remnants, required items |
