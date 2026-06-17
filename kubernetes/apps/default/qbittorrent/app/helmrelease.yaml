@@ -29,6 +29,32 @@ spec:
                 memory: 32Mi
               limits:
                 memory: 128Mi
+          pia-port-forward:
+            image:
+              repository: alpine
+              tag: "3.20"
+            command:
+              - /bin/sh
+              - -c
+              - |
+                apk add --no-cache curl jq iproute2 ca-certificates coreutils
+                exec /bin/sh /scripts/pia-port-forward.sh
+            env:
+              PORT_FILE: /tmp/gluetun/forwarded_port
+              RENEW_SECONDS: "43200"
+              STARTUP_TIMEOUT_SECONDS: "180"
+            envFrom:
+              - secretRef:
+                  name: qbittorrent-vpn-secret
+            resources:
+              requests:
+                cpu: 1m
+                memory: 32Mi
+              limits:
+                memory: 128Mi
+            securityContext:
+              allowPrivilegeEscalation: false
+
           gluetun:
             image:
               repository: ghcr.io/qdm12/gluetun
@@ -140,6 +166,8 @@ spec:
               - path: /tmp/gluetun
             port-sync:
               - path: /tmp/gluetun
+            pia-port-forward:
+              - path: /tmp/gluetun
       scripts:
         type: configMap
         name: qbittorrent-scripts
@@ -148,6 +176,13 @@ spec:
             port-sync:
               - path: /scripts/port-sync.sh
                 subPath: port-sync.sh
+                readOnly: true
+            pia-port-forward:
+              - path: /scripts/pia-port-forward.sh
+                subPath: pia-port-forward.sh
+                readOnly: true
+              - path: /scripts/pia-ca.rsa.4096.crt
+                subPath: pia-ca.rsa.4096.crt
                 readOnly: true
       wireguard:
         type: secret
