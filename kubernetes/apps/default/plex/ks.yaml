@@ -5,6 +5,7 @@ kind: Kustomization
 metadata:
   name: plex
 spec:
+  suspend: true
   components:
     - ../../../../components/zeroscaler
     - ../../../../components/volsync
@@ -38,6 +39,7 @@ kind: Kustomization
 metadata:
   name: plex-tools
 spec:
+  suspend: true
   dependsOn:
     - name: plex
   targetNamespace: default

@@ -5,6 +5,7 @@ kind: Kustomization
 metadata:
   name: stash
 spec:
+  suspend: true
   components:
     - ../../../../components/zeroscaler
     - ../../../../components/volsync

@@ -5,6 +5,7 @@ kind: Kustomization
 metadata:
   name: recyclarr
 spec:
+  suspend: true
   targetNamespace: default
   components:
     - ../../../../components/volsync

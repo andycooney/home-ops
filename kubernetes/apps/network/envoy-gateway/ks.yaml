@@ -4,6 +4,7 @@ kind: Kustomization
 metadata:
   name: envoy-gateway
 spec:
+  suspend: true
   interval: 1h
   path: ./kubernetes/apps/network/envoy-gateway/app
   postBuild:

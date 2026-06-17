@@ -5,6 +5,7 @@ kind: Kustomization
 metadata:
   name: victoria-logs
 spec:
+  suspend: true
   dependsOn:
     - name: rook-ceph-cluster
       namespace: rook-ceph
@@ -24,6 +25,7 @@ kind: Kustomization
 metadata:
   name: victoria-logs-collector
 spec:
+  suspend: true
   dependsOn:
     - name: victoria-logs
   interval: 1h

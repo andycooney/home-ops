@@ -5,6 +5,7 @@ kind: Kustomization
 metadata:
   name: seerr
 spec:
+  suspend: true
   targetNamespace: default
   commonMetadata:
     labels:

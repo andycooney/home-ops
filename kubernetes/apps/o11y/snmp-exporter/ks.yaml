@@ -5,6 +5,7 @@ kind: Kustomization
 metadata:
   name: snmp-exporter
 spec:
+  suspend: true
   dependsOn:
     - name: kube-prometheus-stack
       namespace: o11y

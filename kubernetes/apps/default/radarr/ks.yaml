@@ -5,6 +5,7 @@ kind: Kustomization
 metadata:
   name: radarr
 spec:
+  suspend: true
   components:
     - ../../../../components/zeroscaler
     - ../../../../components/volsync

@@ -5,6 +5,7 @@ kind: Kustomization
 metadata:
   name: unifi-dns
 spec:
+  suspend: true
   interval: 1h
   path: ./kubernetes/apps/network/unifi-dns/app
   prune: true

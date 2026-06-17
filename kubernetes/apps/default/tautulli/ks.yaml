@@ -5,6 +5,7 @@ kind: Kustomization
 metadata:
   name: tautulli
 spec:
+  suspend: true
   targetNamespace: default
   commonMetadata:
     labels:

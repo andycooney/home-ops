@@ -5,6 +5,7 @@ kind: Kustomization
 metadata:
   name: atuin
 spec:
+  suspend: true
   targetNamespace: default
   commonMetadata:
     labels:
