@@ -9,6 +9,8 @@ configMapGenerator:
   - name: qbittorrent-scripts
     files:
       - port-sync.sh=./resources/port-sync.sh
+      - pia-port-forward.sh=./resources/pia-port-forward.sh
+      - pia-ca.rsa.4096.crt=./resources/pia-ca.rsa.4096.crt
 generatorOptions:
   disableNameSuffixHash: true
   annotations:
