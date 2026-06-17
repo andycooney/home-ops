@@ -1,0 +1,86 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: qBittorrent PIA Port Forward Image
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/qbittorrent-pia-port-forward-image.yaml
+      - containers/qbittorrent-pia-port-forward/**
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/qbittorrent-pia-port-forward-image.yaml
+      - containers/qbittorrent-pia-port-forward/**
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/andycooney/qbittorrent-pia-port-forward
+
+jobs:
+  build:
+    name: qBittorrent PIA Port Forward Image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Mise
+        uses: jdx/mise-action@dba19683ed58901619b14f395a24841710cb4925 # v4.1.0
+        with:
+          cache: false
+          tool_versions: |
+            aqua:chainguard-dev/apko 1.2.17
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        if: github.event_name == 'pull_request'
+        run: |
+          apko build \
+            containers/qbittorrent-pia-port-forward/apko.yaml \
+            "${IMAGE_NAME}:test" \
+            /tmp/qbittorrent-pia-port-forward.tar
+
+      - name: Build and publish image
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SHORT_SHA="${GITHUB_SHA::12}"
+          IMAGE_SHA="${IMAGE_NAME}:sha-${SHORT_SHA}"
+
+          apko publish \
+            containers/qbittorrent-pia-port-forward/apko.yaml \
+            "${IMAGE_SHA}"
+
+          echo "Published ${IMAGE_SHA}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Publish main tag
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          apko publish \
+            containers/qbittorrent-pia-port-forward/apko.yaml \
+            "${IMAGE_NAME}:main"
+
+          echo "Published ${IMAGE_NAME}:main" >> "${GITHUB_STEP_SUMMARY}"
