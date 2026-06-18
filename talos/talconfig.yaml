@@ -33,7 +33,7 @@ nodes:
     controlPlane: true
     networkInterfaces:
       - deviceSelector:
-          hardwareAddr: "e8:d8:d1:44:b3:b4"
+          hardwareAddr: "58:47:ca:7d:7b:81"
         dhcp: false
         addresses:
           - "192.168.42.11/24"
