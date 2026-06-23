@@ -97,6 +97,44 @@ Useful file:
 kubernetes/apps/kube-system/cilium/app/udm-frr-bgp.conf
 ```
 
+## Thunderbolt Ceph backend network
+
+The Ceph storage backend is routed Layer 3 over the Thunderbolt ring. It is not bridged.
+
+Management network:
+
+```text
+talos01 -> 192.168.42.11
+talos02 -> 192.168.42.12
+talos03 -> 192.168.42.13
+```
+
+Ceph backend identities:
+
+```text
+talos01 -> 192.168.16.11/32
+talos02 -> 192.168.16.12/32
+talos03 -> 192.168.16.13/32
+```
+
+Thunderbolt point-to-point links:
+
+```text
+talos01 <-> talos02: 192.168.16.0/31
+talos01 <-> talos03: 192.168.16.2/31
+talos02 <-> talos03: 192.168.16.4/31
+```
+
+Current routing is static. Future dynamic routing with FRR is tracked in issue `#191`.
+
+Do not reintroduce a Linux bridge over Thunderbolt for Ceph. The previous bridge design caused severe TCP degradation for transit traffic even though direct Thunderbolt links were fast.
+
+Runbook:
+
+```text
+docs/runbooks/ceph-thunderbolt-backend.md
+```
+
 ## HTTPRoutes
 
 List routes:
