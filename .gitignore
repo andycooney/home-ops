@@ -34,3 +34,15 @@ op-connect-token*
 # Local/private key material
 github-deploy.key
 *.key
+
+# Generated Talos plaintext inputs from 1Password templates
+/talos/talconfig.yaml
+/talos/talsecret.yaml
+
+# Generated Talos plaintext inputs from 1Password templates
+/talos/talconfig.yaml
+/talos/talsecret.yaml
+/kubeconfig
+/talosconfig
+/kubeconfig.bak.*
+/talosconfig.bak.*

@@ -4,38 +4,57 @@ set script-interpreter := ['bash', '-euo', 'pipefail']
 
 [private]
 default:
-    just talos -l
+    just -l talos
 
-[doc('Apply Talos config to a node')]
+[doc('Render Talos configuration for one node')]
 [group('talos')]
-apply-node ip mode='auto':
-    talhelper gencommand apply --node "{{ ip }}" --extra-flags "--mode={{ mode }}" | bash
+[script]
+render-config node:
+    source_dir="{{ source_directory() }}"
+    common="$(mktemp)"
+    patch="$(mktemp)"
+    trap 'rm -f "$common" "$patch"' EXIT
+
+    minijinja-cli --env "${source_dir}/machineconfig.yaml.j2" | vals eval -f - > "$common"
+    minijinja-cli --env "${source_dir}/nodes/{{ node }}.yaml.j2" | vals eval -f - > "$patch"
+
+    talosctl machineconfig patch "$common" -p "@${patch}"
 
 [doc('Generate Talos configuration')]
 [group('talos')]
-generate-config:
-    talhelper genconfig
+[script]
+generate-config node='all':
+    source_dir="{{ source_directory() }}"
+    out_dir="${source_dir}/clusterconfig"
+    mkdir -p "$out_dir"
 
-[confirm("This will destroy your cluster and reset all nodes to maintenance mode — continue? [y/N]")]
-[doc('Reset all nodes back to maintenance mode (DESTRUCTIVE)')]
-[group('talos')]
-reset:
-    talhelper gencommand reset \
-        --extra-flags="--reboot --system-labels-to-wipe STATE --system-labels-to-wipe EPHEMERAL --graceful=false --wait=false" | bash
+    common="$(mktemp)"
+    trap 'rm -f "$common" "${patch:-}"' EXIT
 
-[confirm("This will reset the specified node to maintenance mode — continue? [y/N]")]
-[doc('Reset a single node back to maintenance mode (DESTRUCTIVE)')]
-[group('talos')]
-reset-node ip:
-    talhelper gencommand reset --node "{{ ip }}" \
-        --extra-flags="--reboot --system-labels-to-wipe STATE --system-labels-to-wipe EPHEMERAL --graceful=false --wait=false" | bash
+    minijinja-cli --env "${source_dir}/machineconfig.yaml.j2" | vals eval -f - > "$common"
 
-[doc('Upgrade Kubernetes')]
-[group('talos')]
-upgrade-k8s:
-    talhelper gencommand upgrade-k8s --extra-flags "--to '$(yq '.kubernetesVersion' talenv.yaml)'" | bash
+    requested="{{ node }}"
+    if [[ "$requested" == "all" || "$requested" == "*" ]]; then
+        mapfile -t nodes < <(find "${source_dir}/nodes" -maxdepth 1 -name 'talos*.yaml.j2' -exec basename {} .yaml.j2 \; | sort)
+    else
+        case "$requested" in
+            talos*) nodes=("$requested") ;;
+            *) nodes=("$(printf 'talos%02d' "$requested")") ;;
+        esac
+    fi
 
-[doc('Upgrade Talos on a single node')]
-[group('talos')]
-upgrade-node ip:
-    talhelper gencommand upgrade --node "{{ ip }}" --extra-flags "--timeout=10m" | bash
+    for node in "${nodes[@]}"; do
+        patch="$(mktemp)"
+        minijinja-cli --env "${source_dir}/nodes/${node}.yaml.j2" | vals eval -f - > "$patch"
+
+        out="${out_dir}/kubernetes-${node}.yaml"
+        talosctl machineconfig patch "$common" -p "@${patch}" > "$out"
+
+        rel="${out#${source_dir}/}"
+        echo "wrote $rel"
+        echo "validating $rel"
+        talosctl validate --config "$out" --mode metal
+
+        rm -f "$patch"
+    done
+
