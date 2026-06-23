@@ -31,27 +31,84 @@ scripts/validate-repo.sh
 
 ## Talos configuration
 
+Talos machine configuration is generated from a shared machineconfig template and per-node patch files.
+
 Review:
 
 ```sh
 ls talos
-ls talos/clusterconfig
+ls talos/nodes
+sed -n '1,220p' talos/machineconfig.yaml.j2
+sed -n '1,220p' talos/nodes/talos01.yaml.j2
+sed -n '1,220p' talos/nodes/talos02.yaml.j2
+sed -n '1,220p' talos/nodes/talos03.yaml.j2
 ```
 
 Confirm:
 
-- node IPs
-- disks
-- install image
-- DNS
-- VIP/API endpoint
-- network patches
-- feature patches
+- node management IPs;
+- install disks;
+- install image/schematic;
+- DNS;
+- VIP/API endpoint;
+- primary NIC/bond config;
+- Thunderbolt interface aliases;
+- routed Ceph backend addresses and routes;
+- Kubernetes Talos API access for Tuppr.
 
 Current node resolver target:
 
 ```text
 172.16.1.1
+```
+
+Current Talos/Kubernetes API VIP:
+
+```text
+192.168.42.20
+```
+
+## Talos routed Thunderbolt backend
+
+The Ceph backend uses routed Thunderbolt L3. It is not a Linux bridge.
+
+Stable backend identities:
+
+```text
+talos01 -> 192.168.16.11/32
+talos02 -> 192.168.16.12/32
+talos03 -> 192.168.16.13/32
+```
+
+Thunderbolt point-to-point links:
+
+```text
+talos01 <-> talos02: 192.168.16.0/31
+talos01 <-> talos03: 192.168.16.2/31
+talos02 <-> talos03: 192.168.16.4/31
+```
+
+Interface alias convention:
+
+```text
+thunderbolt0 = physical left  = busPath 1-1.0
+thunderbolt1 = physical right = busPath 0-1.0
+```
+
+Cabling convention:
+
+```text
+talos01 right -> talos02 left
+talos02 right -> talos03 left
+talos03 right -> talos01 left
+```
+
+Do not recreate the old `ceph0` bridge. The bridge design was tested and rejected because transit TCP over bridged `thunderbolt-net` was pathologically slow.
+
+Detailed runbook:
+
+```text
+docs/runbooks/ceph-thunderbolt-backend.md
 ```
 
 ## IoT VLAN Talos patch
@@ -98,8 +155,17 @@ Do not add additional namespaces unless a workload intentionally needs Talos API
 
 ## Regenerate and apply Talos config
 
+Generate all node configs:
+
 ```sh
 just -f talos/mod.just generate-config
+```
+
+Generate one node config:
+
+```sh
+just -f talos/mod.just generate-config talos01
+just -f talos/mod.just generate-config 02
 ```
 
 Verify generated configs:
@@ -107,6 +173,7 @@ Verify generated configs:
 ```sh
 grep -R "vlanId: 777\|interface: eno1" -n talos/clusterconfig
 grep -R "kubernetesTalosAPIAccess\|allowedKubernetesNamespaces\|allowedRoles\|system-upgrade" -n talos/clusterconfig
+grep -R "192.168.16\|thunderbolt0\|thunderbolt1\|busPath" -n talos/clusterconfig
 ```
 
 Apply to nodes:
@@ -135,6 +202,19 @@ eno1.777  up true
 ```
 
 The only expected address on `eno1.777` is IPv6 link-local.
+
+Validate Thunderbolt backend addresses and routes:
+
+```sh
+for node in 192.168.42.11 192.168.42.12 192.168.42.13; do
+  echo
+  echo "===== $node addresses ====="
+  talosctl --endpoints "$node" --nodes "$node" get addresses | grep -E '192\.168\.16|thunderbolt|lo' || true
+  echo
+  echo "===== $node routes ====="
+  talosctl --endpoints "$node" --nodes "$node" get routes | grep -E '192\.168\.16' || true
+done
+```
 
 ## Bootstrap Talos
 
@@ -209,6 +289,25 @@ flux reconcile kustomization cilium -n kube-system --with-source --timeout=10m
 flux reconcile kustomization rook-ceph -n rook-ceph --with-source --timeout=10m
 flux reconcile kustomization rook-ceph-cluster -n rook-ceph --with-source --timeout=10m
 flux reconcile kustomization kopia -n volsync-system --with-source --timeout=5m
+```
+
+Rook/Ceph reconciles can take several minutes when host networking or daemon placement changes cause MON/MGR/MDS/OSD pods to rotate.
+
+## Post-recovery Ceph checks
+
+```sh
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph status
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd dump | grep -E 'osd\.[0-9]+'
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config dump | grep -Ei 'public_network|cluster_network'
+```
+
+Expected:
+
+```text
+HEALTH_OK
+OSDs advertise 192.168.16.11/12/13
+cluster_network 192.168.16.0/24
+public_network 192.168.16.0/24
 ```
 
 ## Post-recovery health
