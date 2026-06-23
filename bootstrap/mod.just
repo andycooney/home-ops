@@ -15,7 +15,7 @@ talos: talos-secret talos-config talos-apply talos-bootstrap talos-kubeconfig
 
 [doc('Bootstrap apps into the Talos cluster')]
 [group('bootstrap')]
-apps: apps-ready apps-namespaces apps-secrets apps-crds apps-helm
+apps: apps-ready apps-namespaces apps-secrets apps-onepassword-secrets apps-crds apps-helm apps-external-secrets apps-onepassword-ready
     just log info "Cluster is bootstrapped — Flux will start syncing the Git repository"
 
 [private]
@@ -66,6 +66,26 @@ apps-helm:
     if ! helmfile --file "{{ source_directory() }}/helmfile.d/01-apps.yaml" sync --hide-notes; then
         just log fatal "Failed to sync helmfile"
     fi
+
+[private]
+[script]
+apps-external-secrets:
+    just log info "Bootstrapping external-secrets before cluster-apps reconciliation"
+
+    if ! kubectl apply -k "{{ kubernetes_dir }}/apps/external-secrets/external-secrets/app"; then
+        just log fatal "Failed to apply external-secrets bootstrap resources"
+    fi
+
+    just log info "Waiting for External Secrets CRDs"
+    until kubectl get crd externalsecrets.external-secrets.io clustersecretstores.external-secrets.io secretstores.external-secrets.io &>/dev/null; do
+        sleep 5
+    done
+
+    just log info "Waiting for external-secrets HelmRelease"
+    until kubectl --namespace external-secrets wait helmrelease external-secrets --for=condition=Ready=True --timeout=30s &>/dev/null; do
+        kubectl --namespace external-secrets get helmrelease external-secrets || true
+        sleep 5
+    done
 
 [private]
 [script]
@@ -133,6 +153,66 @@ apps-secrets:
             just log fatal "Failed to apply secret" resource "$name"
         fi
     done
+
+[private]
+[script]
+apps-onepassword-secrets:
+    just log info "Applying onepassword-connect bootstrap secrets"
+
+    tmpdir="$(mktemp -d)"
+    trap 'rm -rf "$tmpdir"' EXIT
+
+    op read "op://kubernetes/onepassword/OP_CONNECT_FILE" > "$tmpdir/1password-credentials.json"
+
+    kubectl --namespace external-secrets create secret generic onepassword-connect-credentials-secret \
+        --from-file=1password-credentials.json="$tmpdir/1password-credentials.json" \
+        --dry-run=client -o yaml \
+        | kubectl apply --server-side --filename -
+
+    op_token="$(op read "op://kubernetes/onepassword/OP_CONNECT_TOKEN" | tr -d '\r\n')"
+
+    kubectl --namespace external-secrets create secret generic onepassword-connect-vault-secret \
+        --from-literal=OP_CONNECT_TOKEN="$op_token" \
+        --dry-run=client -o yaml \
+        | kubectl apply --server-side --filename -
+
+    just log info "OnePassword Connect bootstrap secrets applied"
+
+[private]
+[script]
+apps-external-secrets:
+    just log info "Bootstrapping external-secrets before cluster-apps reconciliation"
+
+    kubectl apply -k "{{ kubernetes_dir }}/apps/external-secrets"
+
+    just log info "Waiting for External Secrets CRDs"
+    until kubectl get crd externalsecrets.external-secrets.io clustersecretstores.external-secrets.io secretstores.external-secrets.io &>/dev/null; do
+        sleep 5
+    done
+
+    just log info "Waiting for external-secrets controller"
+    until kubectl --namespace external-secrets rollout status deployment external-secrets --timeout=30s &>/dev/null; do
+        kubectl --namespace external-secrets get pods || true
+        sleep 5
+    done
+
+    just log info "Waiting for external-secrets webhook endpoints"
+    until kubectl --namespace external-secrets get endpoints external-secrets-webhook -o jsonpath='{.subsets[0].addresses[0].ip}' &>/dev/null; do
+        sleep 5
+    done
+
+[private]
+[script]
+apps-onepassword-ready:
+    just log info "Waiting for onepassword-connect ClusterSecretStore"
+
+    until kubectl get clustersecretstore onepassword-connect -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' | grep -q True; do
+        kubectl get clustersecretstore onepassword-connect || true
+        sleep 5
+    done
+
+    just log info "onepassword-connect ClusterSecretStore is ready"
+
 
 # Wait until nodes register as Ready=False. They only become Ready=True once the CNI is healthy.
 [private]
