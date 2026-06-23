@@ -147,7 +147,6 @@ id: e278fcc0-5e2d-4a62-9682-62d9cde718e7
 ## External DNS
 
 External-DNS manages records:
-
 ```text
 unifi-dns      -> internal cooney.site records
 cloudflare-dns -> external cooney.online records
@@ -162,15 +161,30 @@ kubectl -n network logs deploy/cloudflare-dns --tail=120
 
 ## Rook/Ceph
 
-Rook/Ceph provides block storage.
+Rook/Ceph provides block storage through the default `ceph-block` StorageClass.
 
-Validate:
+The cluster uses a routed Thunderbolt backend for Ceph public and cluster networks:
+
+```text
+public_network:  192.168.16.0/24
+cluster_network: 192.168.16.0/24
+```
+
+Stable backend identities:
+
+```text
+talos01 -> 192.168.16.11/32
+talos02 -> 192.168.16.12/32
+talos03 -> 192.168.16.13/32
+```
+
+Validate Flux/Rook resources:
 
 ```sh
 flux get ks -n rook-ceph
 flux get hr -n rook-ceph
 kubectl -n rook-ceph get cephcluster
-kubectl -n rook-ceph get pods
+kubectl -n rook-ceph get pods -o wide
 ```
 
 If toolbox is available:
@@ -178,13 +192,25 @@ If toolbox is available:
 ```sh
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph status
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd dump | grep -E 'osd\.[0-9]+'
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config dump | grep -Ei 'public_network|cluster_network'
 ```
 
 Expected:
 
 ```text
 HEALTH_OK
+OSDs advertise 192.168.16.11/12/13
+public_network and cluster_network are 192.168.16.0/24
 ```
+
+Detailed runbook:
+
+```text
+docs/runbooks/ceph-thunderbolt-backend.md
+```
+
+Future dynamic routing work is tracked in issue `#191`.
 
 ## VolSync/Kopia
 
