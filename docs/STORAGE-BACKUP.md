@@ -32,6 +32,54 @@ Expected:
 HEALTH_OK
 ```
 
+### Ceph Thunderbolt backend
+
+Rook/Ceph runs on host networking and uses the routed Thunderbolt backend for both Ceph public and cluster networks:
+
+```text
+public_network:  192.168.16.0/24
+cluster_network: 192.168.16.0/24
+```
+
+Stable backend node identities:
+
+| Node | Backend identity |
+| --- | --- |
+| talos01 | 192.168.16.11/32 |
+| talos02 | 192.168.16.12/32 |
+| talos03 | 192.168.16.13/32 |
+
+Thunderbolt point-to-point links:
+
+```text
+talos01 <-> talos02: 192.168.16.0/31
+talos01 <-> talos03: 192.168.16.2/31
+talos02 <-> talos03: 192.168.16.4/31
+```
+
+Confirm Ceph is advertising OSDs on the backend network:
+
+```sh
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd dump | grep -E 'osd\.[0-9]+'
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config dump | grep -Ei 'public_network|cluster_network'
+```
+
+Expected OSD addresses:
+
+```text
+osd.0 -> 192.168.16.11
+osd.1 -> 192.168.16.12
+osd.2 -> 192.168.16.13
+```
+
+Rook monitor letters are disposable. Do not depend on `mon.a`, `mon.b`, and `mon.c` mapping permanently to specific nodes. Verify quorum and node spread instead.
+
+Full backend runbook:
+
+```text
+docs/runbooks/ceph-thunderbolt-backend.md
+```
+
 ## OpenEBS hostpath storage
 
 OpenEBS hostpath is available for workloads that intentionally need node-local storage, scratch space, or cache-style PVCs.
