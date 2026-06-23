@@ -23,6 +23,39 @@ Important namespaces:
 | o11y | Observability, Alertmanager, Prometheus, VictoriaLogs |
 | flux-system | Flux controllers |
 
+## Ceph backend assumptions
+
+Ceph uses a routed Thunderbolt backend, not a Linux bridge.
+
+Stable backend identities:
+
+| Node | Ceph backend identity |
+| --- | --- |
+| talos01 | 192.168.16.11/32 |
+| talos02 | 192.168.16.12/32 |
+| talos03 | 192.168.16.13/32 |
+
+Point-to-point Thunderbolt links:
+
+```text
+talos01 <-> talos02: 192.168.16.0/31
+talos01 <-> talos03: 192.168.16.2/31
+talos02 <-> talos03: 192.168.16.4/31
+```
+
+Ceph should use the backend network for both public and cluster networks:
+
+```text
+public_network:  192.168.16.0/24
+cluster_network: 192.168.16.0/24
+```
+
+Detailed runbook:
+
+```text
+docs/runbooks/ceph-thunderbolt-backend.md
+```
+
 ## Before touching a node
 
 Check cluster health first.
@@ -42,6 +75,21 @@ health: HEALTH_OK
 mon: quorum present
 osd: 3 osds: 3 up, 3 in
 pgs: active+clean
+```
+
+Also confirm Ceph is still using the routed backend:
+
+```sh
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd dump | grep -E 'osd\.[0-9]+'
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config dump | grep -Ei 'public_network|cluster_network'
+```
+
+Expected OSD addresses:
+
+```text
+osd.0 -> 192.168.16.11
+osd.1 -> 192.168.16.12
+osd.2 -> 192.168.16.13
 ```
 
 ## Check Talos versions
@@ -123,6 +171,8 @@ kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph status
 
 Only work on one node at a time.
 
+Do not intentionally take down an additional node or Thunderbolt link while `noout` is set for another maintenance action.
+
 ## Cordon the node
 
 Cordon prevents new pods from scheduling onto the node during maintenance.
@@ -181,9 +231,31 @@ A healthy result after maintenance:
 ```text
 node is Ready
 node reports the expected Talos version
-Ceph is HEALTH_OK
+Ceph is HEALTH_OK or HEALTH_WARN only because noout is intentionally set
 3 osds up / 3 in
 PGs active+clean
+```
+
+## Validate routed backend after node recovery
+
+After a node reboot, Talos network config should restore the Thunderbolt `/31` links, loopback `/32` identity, and static routes.
+
+```sh
+for node in 192.168.42.11 192.168.42.12 192.168.42.13; do
+  echo
+  echo "===== $node addresses ====="
+  talosctl --endpoints "$node" --nodes "$node" get addresses | grep -E '192\.168\.16|thunderbolt|lo' || true
+  echo
+  echo "===== $node routes ====="
+  talosctl --endpoints "$node" --nodes "$node" get routes | grep -E '192\.168\.16' || true
+done
+```
+
+Confirm Ceph still advertises OSDs on the backend identities:
+
+```sh
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd dump | grep -E 'osd\.[0-9]+'
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config dump | grep -Ei 'public_network|cluster_network'
 ```
 
 ## Finish maintenance
@@ -195,7 +267,7 @@ kubectl uncordon talos01
 kubectl get nodes
 ```
 
-Unset Ceph `noout`:
+Unset Ceph `noout` only after Ceph is stable except for the intentional `noout` warning:
 
 ```sh
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd unset noout
@@ -207,6 +279,7 @@ Final checks:
 ```sh
 kubectl get nodes -o wide
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph status
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd dump | grep -E 'osd\.[0-9]+'
 kubectl get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded
 ```
 
@@ -342,6 +415,7 @@ talosctl --endpoints 192.168.42.11 --nodes 192.168.42.11 service kubelet
 talosctl --endpoints 192.168.42.11 --nodes 192.168.42.11 get machinestatus
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph status
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd tree
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd dump | grep -E 'osd\.[0-9]+'
 ```
 
 If a node is healthy but pods are Pending, verify it is not still cordoned:
@@ -366,6 +440,8 @@ all Kubernetes nodes are Ready
 no node unexpectedly shows SchedulingDisabled
 Ceph is HEALTH_OK
 all OSDs are up/in
+OSDs advertise 192.168.16.11/12/13 backend addresses
+cluster_network and public_network are 192.168.16.0/24
 PGs are active+clean
 no unexpected not-ready pods
 Tuppr is either intentionally paused or intentionally running
