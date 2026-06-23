@@ -69,26 +69,6 @@ apps-helm:
 
 [private]
 [script]
-apps-external-secrets:
-    just log info "Bootstrapping external-secrets before cluster-apps reconciliation"
-
-    if ! kubectl apply -k "{{ kubernetes_dir }}/apps/external-secrets/external-secrets/app"; then
-        just log fatal "Failed to apply external-secrets bootstrap resources"
-    fi
-
-    just log info "Waiting for External Secrets CRDs"
-    until kubectl get crd externalsecrets.external-secrets.io clustersecretstores.external-secrets.io secretstores.external-secrets.io &>/dev/null; do
-        sleep 5
-    done
-
-    just log info "Waiting for external-secrets HelmRelease"
-    until kubectl --namespace external-secrets wait helmrelease external-secrets --for=condition=Ready=True --timeout=30s &>/dev/null; do
-        kubectl --namespace external-secrets get helmrelease external-secrets || true
-        sleep 5
-    done
-
-[private]
-[script]
 apps-namespaces:
     just log info "Applying namespaces for apps"
     for app in "{{ kubernetes_dir }}/apps"/*/; do
