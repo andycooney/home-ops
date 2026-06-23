@@ -12,14 +12,14 @@ machine:
     crt: ref+op://kubernetes/talos/CERTS_OS_CRT
     key: ref+op://kubernetes/talos/CERTS_OS_KEY
   certSANs:
-    - 127.0.0.1
-    - 192.168.42.20
-    - kube.cooney.site
+    - 172.16.16.10
+    - 172.16.16.11
+    - 172.16.16.12
+    - 172.16.16.13
     - talos.cooney.site
     - talos01.cooney.site
     - talos02.cooney.site
     - talos03.cooney.site
-    - 192.168.42.20
   kubelet:
     image: ghcr.io/siderolabs/kubelet:v1.36.1
     extraConfig:
@@ -27,7 +27,7 @@ machine:
     defaultRuntimeSeccompProfileEnabled: true
     nodeIP:
       validSubnets:
-        - 192.168.42.0/24
+        - 172.16.16.0/24
     disableManifestsDirectory: true
   network:
     interfaces:
@@ -92,16 +92,16 @@ cluster:
   id: ref+op://kubernetes/talos/CLUSTER_ID
   secret: ref+op://kubernetes/talos/CLUSTER_SECRET
   controlPlane:
-    endpoint: https://192.168.42.20:6443
+    endpoint: https://172.16.16.10:6443
   clusterName: kubernetes
   network:
     cni:
       name: none
     dnsDomain: cluster.local
     podSubnets:
-      - 10.42.0.0/16
+      - 172.16.20.0/22
     serviceSubnets:
-      - 10.43.0.0/16
+      - 172.16.24.0/22
   token: ref+op://kubernetes/talos/SECRETS_BOOTSTRAPTOKEN
   secretboxEncryptionSecret: ref+op://kubernetes/talos/SECRETS_SECRETBOXENCRYPTIONSECRET
   ca:
@@ -118,14 +118,8 @@ cluster:
       enable-aggregator-routing: "true"
       feature-gates: HPAScaleToZero=true
     certSANs:
-      - 127.0.0.1
-      - 192.168.42.20
-      - kube.cooney.site
-      - talos.cooney.site
-      - talos01.cooney.site
-      - talos02.cooney.site
-      - talos03.cooney.site
-      - 192.168.42.20
+      - 172.16.16.10
+      - kubernetes.cooney.site
     auditPolicy:
       apiVersion: audit.k8s.io/v1
       kind: Policy
@@ -157,7 +151,7 @@ cluster:
     extraArgs:
       listen-metrics-urls: http://0.0.0.0:2381
     advertisedSubnets:
-      - 192.168.42.0/24
+      - 172.16.16.0/24
   coreDNS:
     disabled: true
   allowSchedulingOnControlPlanes: true
@@ -178,7 +172,7 @@ mtu: 1500
 ---
 apiVersion: v1alpha1
 kind: Layer2VIPConfig
-name: 192.168.42.20
+name: 172.16.16.10
 link: bond0
 ---
 apiVersion: v1alpha1

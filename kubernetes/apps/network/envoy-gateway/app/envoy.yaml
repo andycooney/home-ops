@@ -55,7 +55,7 @@ spec:
       bgp.cilium.io/advertise: "true"
     annotations:
       external-dns.alpha.kubernetes.io/hostname: external.${EXTERNAL_DOMAIN}
-      lbipam.cilium.io/ips: "192.168.60.2"
+      lbipam.cilium.io/ips: "172.16.17.2"
   listeners:
     - name: http
       protocol: HTTP
@@ -87,7 +87,7 @@ spec:
       bgp.cilium.io/advertise: "true"
     annotations:
       external-dns.alpha.kubernetes.io/hostname: internal.${INTERNAL_DOMAIN}
-      lbipam.cilium.io/ips: "192.168.60.1"
+      lbipam.cilium.io/ips: "172.16.17.1"
   listeners:
     - name: http
       protocol: HTTP
@@ -139,7 +139,7 @@ spec:
   clientIPDetection:
     xForwardedFor:
       trustedCIDRs:
-        - "10.42.0.0/16"
+        - "172.16.20.0/22"
   http2:
     onInvalidMessage: TerminateStream
   http3: {}

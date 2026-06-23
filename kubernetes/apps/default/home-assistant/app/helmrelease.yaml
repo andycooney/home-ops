@@ -21,8 +21,8 @@ spec:
               tag: 2026.6.3@sha256:82db7a297c96a0288559c5f2849878168c14a06557edc114084d874268c92a9a
             env:
               TZ: America/New_York
-              HASS_HTTP_TRUSTED_PROXY_1: 10.42.0.0/16
-              HASS_HTTP_TRUSTED_PROXY_2: 10.43.0.0/16
+              HASS_HTTP_TRUSTED_PROXY_1: 172.16.20.0/22
+              HASS_HTTP_TRUSTED_PROXY_2: 172.16.24.0/22
               HASS_HTTP_TRUSTED_PROXY_3: 192.168.0.0/16
               HASS_LATITUDE:
                 valueFrom:
