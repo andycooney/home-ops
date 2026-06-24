@@ -1,26 +1,33 @@
 ---
-machine:
-  network:
-    interfaces:
-      - interface: lo
-        addresses:
-          - 192.168.16.12/32
-      - interface: thunderbolt0
-        addresses:
-          - 192.168.16.1/31
-        mtu: 9000
-        routes:
-          - network: 192.168.16.11/32
-            gateway: 192.168.16.0
-      - interface: thunderbolt1
-        addresses:
-          - 192.168.16.4/31
-        mtu: 9000
-        routes:
-          - network: 192.168.16.13/32
-            gateway: 192.168.16.5
----
 apiVersion: v1alpha1
 kind: HostnameConfig
 auto: "off"
 hostname: talos02
+---
+apiVersion: v1alpha1
+kind: LinkConfig
+name: thunderbolt0
+up: true
+mtu: 9000
+addresses:
+  - address: 192.168.16.1/31
+routes:
+  - destination: 192.168.16.11/32
+    gateway: 192.168.16.0
+---
+apiVersion: v1alpha1
+kind: LinkConfig
+name: thunderbolt1
+up: true
+mtu: 9000
+addresses:
+  - address: 192.168.16.4/31
+routes:
+  - destination: 192.168.16.13/32
+    gateway: 192.168.16.5
+---
+apiVersion: v1alpha1
+kind: LinkConfig
+name: lo
+addresses:
+  - address: 192.168.16.12/32

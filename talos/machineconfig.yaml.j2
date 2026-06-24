@@ -31,10 +31,6 @@ machine:
     disableManifestsDirectory: true
   network:
     interfaces:
-      - interface: thunderbolt0
-        mtu: 9000
-      - interface: thunderbolt1
-        mtu: 9000
       - deviceSelector:
           driver: igc
         ignore: true
