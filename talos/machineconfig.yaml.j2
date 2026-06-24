@@ -37,7 +37,7 @@ machine:
   install:
     diskSelector:
       model: "KINGSTON OM8TAP41024K1-A00"
-    image: {{ ENV.TALOS_INSTALLER_IMAGE }}
+    image: {{ "factory.talos.dev/metal-installer/" + ENV.TALOS_SCHEMATIC_ID + ":" + ENV.TALOS_VERSION }}
     wipe: false
     grubUseUKICmdline: true
   files:
