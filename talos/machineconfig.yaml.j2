@@ -185,13 +185,13 @@ vlanID: 666
 ---
 apiVersion: v1alpha1
 kind: LinkAliasConfig
-name: thunderbolt0
+name: ceph-tb0
 selector:
   match: link.bus_path == "1-1.0" && link.driver == "thunderbolt-net"
 ---
 apiVersion: v1alpha1
 kind: LinkAliasConfig
-name: thunderbolt1
+name: ceph-tb1
 selector:
   match: link.bus_path == "0-1.0" && link.driver == "thunderbolt-net"
 
