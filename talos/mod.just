@@ -58,3 +58,8 @@ generate-config node='all':
         rm -f "$patch"
     done
 
+
+[doc('Check Ceph health and Thunderbolt backend links')]
+[group('talos')]
+ceph-backend-check:
+    cd "$(git rev-parse --show-toplevel)" && ./scripts/check-ceph-backend.sh
