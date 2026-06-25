@@ -39,11 +39,11 @@ for node in ${NODES}; do
     get routes | grep -E '192\.168\.16' || true
 
   echo
-  echo "### ${node} ceph/thunderbolt links"
+  echo "### ${node} ceph backend links"
   talosctl --talosconfig "${TALOSCONFIG}" \
     --endpoints "${TALOS_ENDPOINT}" \
     --nodes "${node}" \
-    get linkstatuses | grep -E 'ceph-tb|enx02|thunderbolt|STATE|up|down' || true
+    get linkstatuses | awk 'NR == 1 || $0 ~ /ceph-tb/' || true
 
   echo
   echo "### ${node} schematic"
