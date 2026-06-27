@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TALOSCONFIG="${TALOSCONFIG:-./talosconfig}"
+TALOSCONFIG="${TALOSCONFIG:-$(git rev-parse --show-toplevel)/talosconfig}"
 TALOS_ENDPOINT="${TALOS_ENDPOINT:-172.16.16.10}"
 NODES="${NODES:-172.16.16.11 172.16.16.12 172.16.16.13}"
 ROOK_NS="${ROOK_NS:-rook-ceph}"
