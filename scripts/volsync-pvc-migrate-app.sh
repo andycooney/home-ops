@@ -108,7 +108,7 @@ spec:
     - name: repo
       nfs:
         server: storage.cooney.site
-        path: /home-ops-backups
+        path: /mnt/bytebarn/backups/home-ops-backups
 YAML
 
 kubectl -n "${NAMESPACE}" wait --for=condition=Ready "pod/${KOPIA_POD}" --timeout=120s || true
@@ -274,7 +274,7 @@ spec:
     - name: repo
       nfs:
         server: storage.cooney.site
-        path: /home-ops-backups
+        path: /mnt/bytebarn/backups/home-ops-backups
 YAML
 
 kubectl -n "${NAMESPACE}" wait --for=condition=Ready "pod/${RESTORE_POD}" --timeout=120s || true

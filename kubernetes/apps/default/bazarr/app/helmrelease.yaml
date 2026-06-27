@@ -83,14 +83,14 @@ spec:
       movies:
         type: nfs
         server: storage.cooney.site
-        path: /media/movies
+        path: /mnt/bytebarn/media/movies
         globalMounts:
           - path: /media/movies
       tvshows:
         type: nfs
         server: storage.cooney.site
-        path: /media/tvshows
+        path: /mnt/bytebarn/media/tv
         globalMounts:
-          - path: /media/tvshows
+          - path: /media/tv
       tmp:
         type: emptyDir

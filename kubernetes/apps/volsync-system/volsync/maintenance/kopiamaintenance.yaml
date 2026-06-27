@@ -12,7 +12,7 @@ spec:
     - mountPath: repository
       volumeSource:
         nfs:
-          path: /home-ops-backups
+          path: /mnt/bytebarn/backups/home-ops-backups
           server: storage.cooney.site
   repository:
     repository: volsync-maintenance-secret

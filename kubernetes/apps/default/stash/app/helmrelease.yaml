@@ -89,7 +89,7 @@ spec:
       media:
         type: nfs
         server: storage.cooney.site
-        path: /media
+        path: /mnt/bytebarn/media
         advancedMounts:
           stash:
             app:
@@ -98,7 +98,7 @@ spec:
       unprocessed:
         type: nfs
         server: storage.cooney.site
-        path: /unprocessed
+        path: /mnt/bytebarn/unprocessed
         advancedMounts:
           stash:
             app:

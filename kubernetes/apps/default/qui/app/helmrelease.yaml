@@ -90,13 +90,13 @@ spec:
       media:
         type: nfs
         server: storage.cooney.site
-        path: /media
+        path: /mnt/bytebarn/media
         globalMounts:
           - path: /media
       unprocessed:
         type: nfs
         server: storage.cooney.site
-        path: /unprocessed
+        path: /mnt/bytebarn/unprocessed
         globalMounts:
           - path: /unprocessed
       tmp:
