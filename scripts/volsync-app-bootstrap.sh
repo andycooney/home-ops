@@ -47,7 +47,7 @@ op_field_exists() {
 ensure_nfs_repository_directory() {
   local pod_name="volsync-bootstrap-${APP}"
 
-  echo "Ensuring repository directory exists from inside Kubernetes: /home-ops-backups/${APP}"
+  echo "Ensuring repository directory exists from inside Kubernetes: /mnt/bytebarn/backups/home-ops-backups/${APP}"
 
   kubectl -n default delete pod "${pod_name}" --ignore-not-found --wait=true >/dev/null
 
@@ -75,7 +75,7 @@ ensure_nfs_repository_directory() {
       \"name\": \"repository\",
       \"nfs\": {
         \"server\": \"storage.cooney.site\",
-        \"path\": \"/home-ops-backups\"
+        \"path\": \"/mnt/bytebarn/backups/home-ops-backups\"
       }
     }]
   }
@@ -172,7 +172,7 @@ echo "  op://kubernetes/${APP}/KOPIA_REPOSITORY"
 echo "  op://kubernetes/${APP}/KOPIA_PASSWORD"
 echo
 echo "NFS repository path created/verified:"
-echo "  /home-ops-backups/${APP}"
+echo "  /mnt/bytebarn/backups/home-ops-backups/${APP}"
 echo "Repository directory was created/verified from inside Kubernetes as UID/GID 1000."
 echo "If the QNAP shows different ownership, correct it on the QNAP or review NFS squash/mapping settings."
 echo

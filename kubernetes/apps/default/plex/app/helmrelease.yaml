@@ -139,27 +139,27 @@ spec:
       tvshows:
         type: nfs
         server: storage.cooney.site
-        path: /media/tvshows
+        path: /mnt/bytebarn/media/tv
         advancedMounts:
           plex:
             app:
-              - path: /media/tvshows
+              - path: /mnt/bytebarn/media/tv
                 readOnly: true
       movies:
         type: nfs
         server: storage.cooney.site
-        path: /media/movies
+        path: /mnt/bytebarn/media/movies
         advancedMounts:
           plex:
             app:
-              - path: /media/movies
+              - path: /mnt/bytebarn/media/movies
                 readOnly: true
       transcode:
         type: nfs
         server: storage.cooney.site
-        path: /media/transcode
+        path: /mnt/bytebarn/media/transcode
         advancedMounts:
           plex:
             app:
-              - path: /media/transcode
+              - path: /mnt/bytebarn/media/transcode
                 readOnly: false
