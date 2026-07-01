@@ -19,3 +19,14 @@ spec:
         lbipam.cilium.io/ips: "172.16.17.51"
       externalTrafficPolicy: Cluster
     watchedResources: ["HTTPRoute", "Service"]
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              version: v1
+              kind: Service
+              name: k8s-gateway
+            patch: |
+              - op: add
+                path: /metadata/labels/bgp.cilium.io~1advertise
+                value: "true"
