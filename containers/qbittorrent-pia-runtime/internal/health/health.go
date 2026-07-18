@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -106,6 +107,7 @@ type Verifier struct {
 	DNSName                         string
 	Timeout                         time.Duration
 	RootCAs                         *x509.CertPool
+	Control                         func(string, string, syscall.RawConn) error
 }
 
 func (v Verifier) Verify(ctx context.Context, preTunnelIP netip.Addr) (Result, error) {
@@ -117,12 +119,16 @@ func (v Verifier) Verify(ctx context.Context, preTunnelIP netip.Addr) (Result, e
 	}
 	ctx, cancel := context.WithTimeout(ctx, v.Timeout)
 	defer cancel()
+	control := v.Control
+	if control == nil {
+		control = bindToDevice(v.Interface)
+	}
 	before, err := ReadCounters(v.Interface)
 	if err != nil {
 		return Result{}, errors.New("tunnel counters unavailable")
 	}
 	resolver := &net.Resolver{PreferGo: true, StrictErrors: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-		d := net.Dialer{Timeout: v.Timeout, Control: bindToDevice(v.Interface)}
+		d := net.Dialer{Timeout: v.Timeout, Control: control}
 		return d.DialContext(ctx, network, dnsEndpoint(v.DNSAddress))
 	}}
 	dnsName := v.DNSName
@@ -132,7 +138,7 @@ func (v Verifier) Verify(ctx context.Context, preTunnelIP netip.Addr) (Result, e
 	if _, err := resolver.LookupHost(ctx, dnsName); err != nil {
 		return Result{}, errors.New("tunneled DNS failed")
 	}
-	dialer := &net.Dialer{Timeout: v.Timeout, Control: bindToDevice(v.Interface)}
+	dialer := &net.Dialer{Timeout: v.Timeout, Control: control}
 	transport := &http.Transport{DialContext: dialer.DialContext, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: v.RootCAs}}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: v.Timeout}
