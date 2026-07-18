@@ -3,7 +3,7 @@ kind: Kustomization
 metadata:
   name: mosquitto
 spec:
-  suspend: true
+  suspend: false
   targetNamespace: default
   commonMetadata:
     labels:
