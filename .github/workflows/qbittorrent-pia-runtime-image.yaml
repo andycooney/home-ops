@@ -1,0 +1,219 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: qBittorrent PIA Runtime Image
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/qbittorrent-pia-runtime-image.yaml
+      - containers/qbittorrent-pia-runtime/**
+      - docs/QBITTORRENT-PIA-RUNTIME-IMAGE.md
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/qbittorrent-pia-runtime-image.yaml
+      - containers/qbittorrent-pia-runtime/**
+      - docs/QBITTORRENT-PIA-RUNTIME-IMAGE.md
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Reviewed repository branch, tag, or commit already contained in main
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/andycooney/qbittorrent-pia-runtime
+  RUNTIME_DIR: containers/qbittorrent-pia-runtime
+  GO_VERSION: 1.26.5
+  STATICCHECK_VERSION: v0.7.0
+
+jobs:
+  validate:
+    name: Test and build linux/amd64
+    runs-on: ubuntu-latest
+    outputs:
+      revision: ${{ steps.revision.outputs.revision }}
+      short-revision: ${{ steps.revision.outputs.short-revision }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
+
+      - name: Validate trusted workflow-dispatch ref
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SELECTED_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          case "${SELECTED_REF}" in
+            refs/heads/*|refs/tags/*|[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
+            *) echo "ref must be a repository branch, tag, or commit" >&2; exit 1 ;;
+          esac
+          git fetch origin main --prune
+          SELECTED_SHA="$(git rev-parse HEAD)"
+          git merge-base --is-ancestor "${SELECTED_SHA}" origin/main
+
+      - name: Resolve revision
+        id: revision
+        run: |
+          set -euo pipefail
+          REVISION="$(git rev-parse HEAD)"
+          echo "revision=${REVISION}" >> "${GITHUB_OUTPUT}"
+          echo "short-revision=${REVISION::12}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: containers/qbittorrent-pia-runtime/go.mod
+
+      - name: Verify formatting
+        working-directory: ${{ env.RUNTIME_DIR }}
+        run: test -z "$(gofmt -l .)"
+
+      - name: Vet
+        working-directory: ${{ env.RUNTIME_DIR }}
+        run: go vet ./...
+
+      - name: Unit and offline integration tests
+        working-directory: ${{ env.RUNTIME_DIR }}
+        run: go test -count=1 ./...
+
+      - name: Race tests
+        working-directory: ${{ env.RUNTIME_DIR }}
+        run: go test -race -count=1 ./...
+
+      - name: Staticcheck
+        working-directory: ${{ env.RUNTIME_DIR }}
+        run: |
+          go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
+          staticcheck ./...
+
+      - name: Build binary self-test
+        working-directory: ${{ env.RUNTIME_DIR }}
+        run: go run ./cmd/pia-runtime self-test
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build PR validation image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: containers/qbittorrent-pia-runtime
+          file: containers/qbittorrent-pia-runtime/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ${{ env.IMAGE_NAME }}:pr-validation
+          provenance: false
+          build-args: |
+            VERSION=pr-validation
+            REVISION=${{ steps.revision.outputs.revision }}
+            CREATED=1970-01-01T00:00:00Z
+
+      - name: Offline image self-test
+        run: |
+          docker run --rm --network none --cap-drop ALL \
+            --env PIA_RUNTIME_IMAGE_SELF_TEST=1 \
+            "${IMAGE_NAME}:pr-validation" self-test
+
+      - name: Inspect image contract
+        run: |
+          set -euo pipefail
+          INSPECT="$(docker image inspect "${IMAGE_NAME}:pr-validation")"
+          test "$(jq -r '.[0].Architecture' <<<"${INSPECT}")" = amd64
+          test "$(jq -r '.[0].Config.Entrypoint | join(" ")' <<<"${INSPECT}")" = /usr/local/bin/pia-runtime
+          test "$(jq -r '.[0].Config.Healthcheck.Test | join(" ")' <<<"${INSPECT}")" = "CMD /usr/local/bin/pia-runtime healthcheck"
+          test "$(jq -r '.[0].Config.Labels["org.opencontainers.image.base.digest"]' <<<"${INSPECT}")" = sha256:1a5bf4b4820a879cdf8d93d7ef0d2d963af56670c9ebff8981860b6804ebc8ab
+          test "$(jq -r '.[0].Config.Labels["org.opencontainers.image.revision"]' <<<"${INSPECT}")" = "${{ steps.revision.outputs.revision }}"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: ${{ env.IMAGE_NAME }}:pr-validation
+          format: spdx-json
+          output-file: /tmp/qbittorrent-pia-runtime.spdx.json
+          upload-artifact: false
+
+      - name: Validate SBOM
+        run: jq -e '.spdxVersion and (.packages | length > 0)' /tmp/qbittorrent-pia-runtime.spdx.json
+
+      - name: Scan image vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:pr-validation
+          format: table
+          exit-code: 1
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          scanners: vuln
+
+  publish:
+    name: Publish immutable image
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout validated revision
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          ref: ${{ needs.validate.outputs.revision }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set creation time
+        id: creation
+        run: echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${GITHUB_OUTPUT}"
+
+      - name: Build and publish immutable image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: containers/qbittorrent-pia-runtime
+          file: containers/qbittorrent-pia-runtime/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:sha-${{ needs.validate.outputs.short-revision }}
+          provenance: mode=max
+          sbom: true
+          build-args: |
+            VERSION=sha-${{ needs.validate.outputs.short-revision }}
+            REVISION=${{ needs.validate.outputs.revision }}
+            CREATED=${{ steps.creation.outputs.created }}
+
+      - name: Attest published image
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Report immutable image
+        run: |
+          echo "Published \`${IMAGE_NAME}:sha-${{ needs.validate.outputs.short-revision }}\`" >> "${GITHUB_STEP_SUMMARY}"
+          echo "Digest: \`${{ steps.build.outputs.digest }}\`" >> "${GITHUB_STEP_SUMMARY}"

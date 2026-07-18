@@ -1,0 +1,76 @@
+# qBittorrent runtime PIA WireGuard image
+
+## Decision and scope
+
+qBittorrent needs a complete, fresh PIA WireGuard registration when an endpoint becomes unhealthy. A shell or ConfigMap wrapper cannot safely combine PID 1 duties, atomic firewall transitions, strict TLS-to-selected-IP registration, typed API validation, child reaping, deterministic tests, and generation publication without adding a large runtime toolchain. This PR therefore adds a static Go supervisor to a digest-pinned Gluetun image.
+
+This is PR 1 only. Kubernetes manifests, ExternalSecrets, PF scripts/helpers, PVCs, storage, routes, VolSync, zeroscaler, probes, deployment configuration, and live Talos validation are explicitly deferred to PR 2.
+
+## Process and ownership model
+
+`/usr/local/bin/pia-runtime supervise` is PID 1. It owns signal handling, readiness, PIA discovery/registration, session generations, tunnel verification, health/failover decisions, and the firewall. `/gluetun-entrypoint` is a child whose only VPN role is to create and maintain the custom WireGuard tunnel.
+
+The supervisor forwards SIGINT/SIGTERM as SIGTERM after first revoking readiness and UID 1000's tunnel permission. It waits for the configured grace period, uses SIGKILL only after timeout, waits for the child, and leaves the fail-closed rules installed. Direct child processes are reaped. Gluetun's own five-second shutdown handling remains inside that outer bound.
+
+Gluetun's firewall and restart ownership are disabled with the exact variables implemented by v3.41.1. In particular, reviewed upstream uses `HEALTH_RESTART_VPN=off`; `HEALTHCHECK_RESTART_VPN` is not recognized by this version. The resulting contract is:
+
+> Supervisor-owned kill switch active while Gluetun supplies the tunnel.
+
+PIA credentials and any environment names containing tokens, passwords, authorization data, or private keys are removed before Gluetun starts. The child receives only the path to the already-published `wg0.conf`; secrets are never command arguments.
+
+## State machine
+
+The explicit states are `BOOTSTRAP`, `SELECTING_SERVER`, `REGISTERING_WIREGUARD`, `STARTING_TUNNEL`, `VERIFYING_TUNNEL`, `HEALTHY`, `FAILING_OVER`, `AUTHENTICATION_FAILED`, `BACKOFF`, and `SHUTTING_DOWN`.
+
+Startup installs/audits the firewall before external traffic, validates configuration, and obtains a pre-tunnel public IP without logging it. Candidate selection accepts only non-US, online, WireGuard-present, PF-capable regions, applies configured preference order, excludes cooldown endpoints, and bounds a cycle to six candidates by default. Each attempt gets a new token and X25519 keypair, validates the endpoint's certificate hostname while dialing its IP, strictly validates the registration, and creates a new generation.
+
+The application stays blocked while Gluetun starts. Verification binds root DNS and HTTPS sockets to `tun0`, requires the registered PIA DNS server to answer, obtains a tunneled public IP that differs from the pre-tunnel value, and requires RX and TX counters to increase. Only then are `ready` and UID 1000's `tun0` rule published.
+
+Health runs every 15 seconds. The first failure atomically removes `ready` and UID 1000 access; recovery republishes both. Four consecutive failures cause failover. Failover stops and reaps Gluetun behind a locked firewall, cools the endpoint, deletes the failed generation, and constructs an entirely new token/key/registration/config generation. Sessions rotate proactively at 20 hours. Authentication failure stays live and retries no faster than 15 minutes. Other outages use jittered 30-second, one-minute, two-minute, four-minute, and capped five-minute backoff.
+
+## Firewall model
+
+`firewall-init` and every transition cover IPv4 and IPv6. They use dedicated `PIA_RUNTIME_INPUT`, `PIA_RUNTIME_OUTPUT`, and `PIA_RUNTIME_FORWARD` chains, `iptables-restore`/`ip6tables-restore` with `--noflush`, and never flush unrelated chains or temporarily set built-in policies to ACCEPT. INPUT, OUTPUT, and FORWARD policies are DROP. The manager reuses the chains idempotently, installs their built-in-chain hooks when absent, and audits policies, chains, and hooks after applying a transaction.
+
+Loopback and established/related flows are allowed. Explicit non-WAN subnets and the configured inbound qBittorrent HTTP port are narrow exceptions. During bootstrap only UID 0 gets DNS and HTTPS. Registration replaces that broad bootstrap access with TLS to one candidate IP/port. Tunnel startup replaces it with the exact UDP WireGuard endpoint. Root verification may use `tun0`; UID 1000 cannot use any non-`tun0` output interface and receives `tun0` permission only in `HEALTHY`.
+
+The exact endpoint rule is not owner-matched because kernel WireGuard packets do not reliably carry a userspace socket owner through every supported kernel/backend path. An earlier UID 1000 non-tunnel DROP rule prevents the application from using that exception. This owner-match ordering, nft/legacy behavior, shared-pod UID visibility, CNI routes, service traffic, and Talos kernel modules require live validation in PR 2. Forced supervisor death leaves the terminal DROP rules and UID block in the shared network namespace; restart first reasserts and audits them.
+
+## Runtime filesystem contract
+
+PR 2 must mount `/run/pia` as tmpfs. The supervisor refuses a non-tmpfs filesystem on Linux. It creates:
+
+```text
+/run/pia/
+├── current -> sessions/<generation>
+├── ready -> sessions/<generation>
+└── sessions/<generation>/
+    ├── generation, region, endpoint, tls-hostname, wg-gateway, pf-gateway
+    ├── pia.token
+    ├── wg0.conf
+    └── pf/{payload,signature,expires-at}
+```
+
+The root is `0750 root:65532`, `sessions` and generation directories are `0710 root:65532`, and `pf` is `0730 65532:65532`. Metadata and the token are `0640 root:65532`; `wg0.conf` is `0600 root:root`; PF files are `0600 65532:65532`. The PF identity can traverse only the needed directories and cannot read `wg0.conf`.
+
+Every file is created in its target directory, assigned mode and ownership, written, synced, closed, atomically renamed, and followed by a directory sync. `current` and `ready` use same-directory temporary symlinks and atomic rename. `current` appears only after the complete generation and empty permission-correct PF targets exist; `ready` appears only after verification. Invalidation removes `ready` before child shutdown, and stale session material is removed after readers can observe invalidation.
+
+This provides atomic visibility and tmpfs-only persistence. It does not claim secure RAM erasure: Go strings, kernel buffers, and tmpfs pages cannot be proven overwritten. No token, key, configuration, PF payload/signature, public IP, response body, authorization header, or credential is logged or passed as an argument.
+
+## PIA and image supply chain
+
+The PIA flow and CA come from `pia-foss/manual-connections` commit `a1412dbe2ca41edbb79c766bc475335cb6cb13ad`. Gluetun is v3.41.1 source commit `7f22fb32764d5d7548bc669cde88c57fc1a0de83`. Exact source URLs, reviewed behavior, certificate hash, image/platform metadata, and update instructions are in [`UPSTREAM.md`](../containers/qbittorrent-pia-runtime/UPSTREAM.md).
+
+The runtime base is `ghcr.io/qdm12/gluetun:v3.41.1@sha256:1a5bf4b4820a879cdf8d93d7ef0d2d963af56670c9ebff8981860b6804ebc8ab`. The builder is `golang:1.26.5-alpine3.23@sha256:73f9732658b30852522ee5ebe698daa27e1829add9a70ff4f4a828409f8d0a99`. The static linux/amd64 binary has no module dependencies, and no runtime package is installed.
+
+## Tests and publication
+
+Offline tests cover strict schema rejection, candidate filters/order/cooldown/bounds, token and registration parsing, authentication classification, context cancellation, TLS hostname-to-IP binding and certificate rejection, fresh key generation, configuration validation, all firewall states and transactions, idempotent restoration/audit, UID 1000 invariants, atomic files/symlinks/modes/ownership, PF isolation, stale removal, state/probe separation, backoff bounds, proactive rotation, health thresholds, environment/log redaction, SIGTERM, bounded SIGKILL, and fixture self-test. Ordinary tests never invoke iptables or live PIA services.
+
+The pull-request workflow runs only on `ubuntu-latest`, uses full-SHA action pins, tests/vets/race-tests/staticchecks, builds linux/amd64, runs the image self-test with no network or credentials, inspects the image contract, generates/validates an SBOM, and scans vulnerabilities. It does not authenticate to GHCR or publish anything.
+
+After a reviewed merge to `main`, the workflow repeats validation and publishes only `ghcr.io/andycooney/qbittorrent-pia-runtime:sha-<12-character-commit>` with OCI source, revision, version, creation, title, description, license, base-name, and base-digest labels. BuildKit SBOM/provenance and GitHub provenance attestation accompany the immutable digest. Trusted manual publication accepts only a selected repository ref already contained in `origin/main`. No mutable tag is created.
+
+## Remaining PR 2 risks
+
+PR 2 must validate the tmpfs mount, `/dev/net/tun`, capabilities, init ordering, shared network namespace, actual qBittorrent UID, service/CNI subnet exceptions, nft and legacy behavior on Talos, input policy effects on sidecars and probes, kernel WireGuard endpoint traffic, DNS routing, generation/PF handoff, graceful and forced restart behavior, and liveness-driven container restart. Until that integration is reviewed and tested, this image must not replace the live qBittorrent deployment.
