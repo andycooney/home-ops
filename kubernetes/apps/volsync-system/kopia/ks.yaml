@@ -5,7 +5,7 @@ kind: Kustomization
 metadata:
   name: kopia
 spec:
-  suspend: true
+  suspend: false
   dependsOn:
     - name: volsync
   interval: 1h

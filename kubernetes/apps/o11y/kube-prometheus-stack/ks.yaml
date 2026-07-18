@@ -5,7 +5,7 @@ kind: Kustomization
 metadata:
   name: kube-prometheus-stack
 spec:
-  suspend: true
+  suspend: false
   dependsOn:
     - name: rook-ceph-cluster
       namespace: rook-ceph

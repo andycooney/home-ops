@@ -4,7 +4,7 @@ kind: Kustomization
 metadata:
   name: cloudflare-tunnel
 spec:
-  suspend: true
+  suspend: false
   interval: 1h
   path: ./kubernetes/apps/network/cloudflare-tunnel/app
   postBuild:

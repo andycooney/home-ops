@@ -4,7 +4,7 @@ kind: Kustomization
 metadata:
   name: k8s-gateway
 spec:
-  suspend: true
+  suspend: false
   interval: 1h
   path: ./kubernetes/apps/network/k8s-gateway/app
   postBuild:
