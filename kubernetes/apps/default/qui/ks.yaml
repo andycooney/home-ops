@@ -5,7 +5,7 @@ kind: Kustomization
 metadata:
   name: qui
 spec:
-  suspend: true
+  suspend: false
   components:
     - ../../../../components/zeroscaler
     - ../../../../components/volsync
