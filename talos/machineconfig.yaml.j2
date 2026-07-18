@@ -21,7 +21,7 @@ machine:
     - talos02.cooney.site
     - talos03.cooney.site
   kubelet:
-    image: ghcr.io/siderolabs/kubelet:v1.36.1
+    image: ghcr.io/siderolabs/kubelet:v1.36.2
     extraConfig:
       serializeImagePulls: false
     defaultRuntimeSeccompProfileEnabled: true
@@ -109,7 +109,7 @@ cluster:
   serviceAccount:
     key: ref+op://kubernetes/talos/CERTS_K8SSERVICEACCOUNT_KEY
   apiServer:
-    image: registry.k8s.io/kube-apiserver:v1.36.1
+    image: registry.k8s.io/kube-apiserver:v1.36.2
     extraArgs:
       enable-aggregator-routing: "true"
       feature-gates: HPAScaleToZero=true
@@ -122,15 +122,15 @@ cluster:
       rules:
         - level: Metadata
   controllerManager:
-    image: registry.k8s.io/kube-controller-manager:v1.36.1
+    image: registry.k8s.io/kube-controller-manager:v1.36.2
     extraArgs:
       bind-address: 0.0.0.0
       feature-gates: HPAScaleToZero=true
   proxy:
     disabled: true
-    image: registry.k8s.io/kube-proxy:v1.36.1
+    image: registry.k8s.io/kube-proxy:v1.36.2
   scheduler:
-    image: registry.k8s.io/kube-scheduler:v1.36.1
+    image: registry.k8s.io/kube-scheduler:v1.36.2
     extraArgs:
       bind-address: 0.0.0.0
       feature-gates: HPAScaleToZero=true
