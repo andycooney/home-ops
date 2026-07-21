@@ -93,12 +93,31 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		s.Status.Fail()
 		return fmt.Errorf("install fail-closed firewall: %w", err)
 	}
-	preTunnelIP, err := s.PublicIP(ctx, s.Config.PublicIPURL, s.Config.ProbeTimeout)
+	preTunnelIP, err := s.bootstrapPublicIP(ctx)
 	if err != nil {
-		s.log("bootstrap public-IP verification failed")
-		return s.backoffLoop(ctx, netip.Addr{})
+		return s.shutdown()
 	}
 	return s.backoffLoop(ctx, preTunnelIP)
+}
+
+func (s *Supervisor) bootstrapPublicIP(ctx context.Context) (netip.Addr, error) {
+	backoff := 30 * time.Second
+	for ctx.Err() == nil {
+		s.transition(StateBootstrap, false)
+		preTunnelIP, err := s.PublicIP(ctx, s.Config.PublicIPURL, s.Config.ProbeTimeout)
+		if err == nil && preTunnelIP.IsValid() {
+			return preTunnelIP, nil
+		}
+		s.log("bootstrap public-IP verification failed")
+		s.transition(StateBackoff, false)
+		delay := jitter(backoff, s.Now())
+		s.log("bootstrap failure; retrying in %s", delay)
+		if err := s.Sleep(ctx, delay); err != nil {
+			return netip.Addr{}, err
+		}
+		backoff = nextBackoff(backoff)
+	}
+	return netip.Addr{}, ctx.Err()
 }
 
 func (s *Supervisor) backoffLoop(ctx context.Context, preTunnelIP netip.Addr) error {

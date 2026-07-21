@@ -18,6 +18,7 @@ import (
 	"github.com/andycooney/home-ops/containers/qbittorrent-pia-runtime/internal/firewall"
 	"github.com/andycooney/home-ops/containers/qbittorrent-pia-runtime/internal/health"
 	"github.com/andycooney/home-ops/containers/qbittorrent-pia-runtime/internal/session"
+	"github.com/andycooney/home-ops/containers/qbittorrent-pia-runtime/internal/wireguard"
 )
 
 func TestEveryStateTransitionIsLiveAndNotReadyExceptHealthy(t *testing.T) {
@@ -101,15 +102,106 @@ func (f *fakeFirewall) Apply(_ context.Context, state firewall.State, _ firewall
 	return nil
 }
 
-type fakePublisher struct{ ready, invalidated, currentInvalidated int }
+type fakePublisher struct{ ready, invalidated, currentInvalidated, published int }
 
 func (p *fakePublisher) PublishCurrent(_ session.Generation) (string, error) {
+	p.published++
 	return "/tmp/generation", nil
 }
 func (p *fakePublisher) PublishReady(string) error { p.ready++; return nil }
 func (p *fakePublisher) InvalidateReady() error    { p.invalidated++; return nil }
 func (p *fakePublisher) InvalidateCurrent() error  { p.currentInvalidated++; return nil }
 func (p *fakePublisher) Remove(string) error       { return nil }
+
+type bootstrapAPI struct {
+	cancel    context.CancelFunc
+	fetches   int
+	probes    int
+	tokens    int
+	registers int
+}
+
+func (a *bootstrapAPI) FetchServerList(context.Context) (api.ServerList, error) {
+	a.fetches++
+	a.cancel()
+	return api.ServerList{}, errors.New("stop after bootstrap")
+}
+func (a *bootstrapAPI) Probe(context.Context, api.Candidate) error {
+	a.probes++
+	return nil
+}
+func (a *bootstrapAPI) Token(context.Context, string, string) (string, error) {
+	a.tokens++
+	return "", errors.New("unexpected token request")
+}
+func (a *bootstrapAPI) Register(context.Context, api.Candidate, string, string) (wireguard.Registration, error) {
+	a.registers++
+	return wireguard.Registration{}, errors.New("unexpected registration")
+}
+
+type countingProcess struct{ starts int }
+
+func (p *countingProcess) Start(string, []string) (Child, error) {
+	p.starts++
+	return nil, errors.New("unexpected child start")
+}
+
+func TestBootstrapPublicIPRetriesBeforeAnySessionActivity(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := &bootstrapAPI{cancel: cancel}
+	publisher := &fakePublisher{}
+	process := &countingProcess{}
+	fw := &fakeFirewall{}
+	status := health.NewStatus()
+	attempts := 0
+	var sleeps []time.Duration
+	s := Supervisor{
+		Config:    config.Config{PublicIPURL: "https://example.invalid/ip", ProbeTimeout: time.Second},
+		API:       client,
+		Firewall:  fw,
+		Publisher: publisher,
+		Verifier:  &fakeVerifier{},
+		Process:   process,
+		Status:    status,
+		PublicIP: func(context.Context, string, time.Duration) (netip.Addr, error) {
+			attempts++
+			if len(fw.states) != 1 || fw.states[0] != firewall.Bootstrap {
+				t.Fatalf("fail-closed firewall was not the only activity before bootstrap: %v", fw.states)
+			}
+			if client.fetches != 0 || client.probes != 0 || client.tokens != 0 || client.registers != 0 || publisher.published != 0 || process.starts != 0 {
+				t.Fatal("API, generation, or tunnel activity occurred before bootstrap succeeded")
+			}
+			if attempts < 3 {
+				return netip.Addr{}, errors.New("transient public-IP failure")
+			}
+			return netip.MustParseAddr("198.51.100.10"), nil
+		},
+		Now: func() time.Time { return time.Unix(0, 0) },
+		Sleep: func(_ context.Context, delay time.Duration) error {
+			if status.State() != string(StateBackoff) || status.Ready() || !status.Live(time.Minute) {
+				t.Fatalf("bootstrap backoff state=%s ready=%v live=%v", status.State(), status.Ready(), status.Live(time.Minute))
+			}
+			sleeps = append(sleeps, delay)
+			return nil
+		},
+	}
+	if err := s.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 3 || client.fetches != 1 {
+		t.Fatalf("public-IP attempts=%d server-list fetches=%d", attempts, client.fetches)
+	}
+	if client.probes != 0 || client.tokens != 0 || client.registers != 0 || publisher.published != 0 || process.starts != 0 {
+		t.Fatalf("unexpected session activity: probes=%d tokens=%d registrations=%d generations=%d starts=%d", client.probes, client.tokens, client.registers, publisher.published, process.starts)
+	}
+	if len(sleeps) != 2 || sleeps[0] != 24*time.Second || sleeps[1] != 48*time.Second {
+		t.Fatalf("bootstrap backoff=%v", sleeps)
+	}
+	if s.Status.Ready() || s.Status.State() != string(StateShuttingDown) {
+		t.Fatalf("state=%s ready=%v", s.Status.State(), s.Status.Ready())
+	}
+}
 
 type fakeChild struct{ done chan error }
 

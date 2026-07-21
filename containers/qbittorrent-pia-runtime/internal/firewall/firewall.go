@@ -108,6 +108,12 @@ func Transaction(cfg Config, state State, endpoint Endpoint, ipv6 bool) (string,
 	}
 	b.WriteString("-A PIA_RUNTIME_INPUT -i lo -j ACCEPT\n-A PIA_RUNTIME_INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n")
 	b.WriteString("-A PIA_RUNTIME_OUTPUT -o lo -j ACCEPT\n")
+	for _, subnet := range cfg.AllowedSubnets {
+		if subnet.Addr().Is6() != ipv6 {
+			continue
+		}
+		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d ! -o %s -p tcp --sport %d -d %s -m conntrack --ctstate ESTABLISHED -j ACCEPT\n", cfg.ApplicationUID, cfg.Interface, cfg.ServicePort, subnet)
+	}
 	fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d ! -o %s -j DROP\n", cfg.ApplicationUID, cfg.Interface)
 	b.WriteString("-A PIA_RUNTIME_OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n")
 	for _, subnet := range cfg.AllowedSubnets {

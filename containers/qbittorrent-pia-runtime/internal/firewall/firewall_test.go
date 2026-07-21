@@ -43,6 +43,55 @@ func TestCompleteTransactionsAndNoUIDDefaultAllowance(t *testing.T) {
 	}
 }
 
+func TestUIDServiceRepliesAreNarrowFamilyMatchedAndOrdered(t *testing.T) {
+	endpoint := Endpoint{IP: netip.MustParseAddr("192.0.2.10"), Port: 1337}
+	for _, tc := range []struct {
+		name       string
+		ipv6       bool
+		allowed    string
+		other      string
+		unapproved string
+	}{
+		{name: "IPv4", allowed: "10.42.0.0/16", other: "fd00:42::/64", unapproved: "203.0.113.0/24"},
+		{name: "IPv6", ipv6: true, allowed: "fd00:42::/64", other: "10.42.0.0/16", unapproved: "2001:db8::/32"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, state := range []State{Bootstrap, Selected, Verifying, Healthy, Locked} {
+				tx, err := Transaction(testConfig(), state, endpointFor(state, endpoint), tc.ipv6)
+				if err != nil {
+					t.Fatal(err)
+				}
+				reply := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 1000 ! -o tun0 -p tcp --sport 8080 -d " + tc.allowed + " -m conntrack --ctstate ESTABLISHED -j ACCEPT"
+				drop := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 1000 ! -o tun0 -j DROP"
+				established := "-A PIA_RUNTIME_OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+				replyIndex, dropIndex, establishedIndex := strings.Index(tx, reply), strings.Index(tx, drop), strings.Index(tx, established)
+				if replyIndex < 0 || !(replyIndex < dropIndex && dropIndex < establishedIndex) {
+					t.Fatalf("%s %s service reply/drop/established ordering is unsafe", state, tc.name)
+				}
+				if strings.Contains(tx, "--uid-owner 1000") && strings.Contains(tx, "-d "+tc.other+" -m conntrack --ctstate ESTABLISHED -j ACCEPT") {
+					t.Fatalf("%s %s contains cross-family service reply rule", state, tc.name)
+				}
+				if strings.Contains(tx, "-d "+tc.unapproved+" -m conntrack --ctstate ESTABLISHED -j ACCEPT") {
+					t.Fatalf("%s %s permits an unapproved service response destination", state, tc.name)
+				}
+				replyAllowances := 0
+				for _, line := range strings.Split(tx, "\n") {
+					if !strings.Contains(line, "--uid-owner 1000") || !strings.Contains(line, "-j ACCEPT") || strings.Contains(line, "-o tun0") && !strings.Contains(line, "! -o tun0") {
+						continue
+					}
+					replyAllowances++
+					if line != reply {
+						t.Fatalf("%s %s has broad UID service allowance %q", state, tc.name, line)
+					}
+				}
+				if replyAllowances != 1 {
+					t.Fatalf("%s %s UID service reply allowances=%d", state, tc.name, replyAllowances)
+				}
+			}
+		})
+	}
+}
+
 func TestTransitionProtocolIsNarrow(t *testing.T) {
 	endpoint := Endpoint{IP: netip.MustParseAddr("192.0.2.10"), Port: 1337}
 	selected, _ := Transaction(testConfig(), Selected, endpoint, false)
