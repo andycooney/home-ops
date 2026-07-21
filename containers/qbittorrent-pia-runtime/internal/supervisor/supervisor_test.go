@@ -183,6 +183,41 @@ type cycleAPI struct{}
 
 type candidateListAPI struct{ count int }
 
+type classifiedAPI struct {
+	count          int
+	events         []string
+	probeErrors    map[string]error
+	tokenErrors    []error
+	registerErrors map[string]error
+}
+
+func (a *classifiedAPI) FetchServerList(ctx context.Context) (api.ServerList, error) {
+	a.events = append(a.events, "metadata")
+	return (candidateListAPI{count: a.count}).FetchServerList(ctx)
+}
+func (a *classifiedAPI) Probe(_ context.Context, candidate api.Candidate) error {
+	a.events = append(a.events, "probe:"+candidate.IP)
+	return a.probeErrors[candidate.IP]
+}
+func (a *classifiedAPI) Token(context.Context, string, string) (string, error) {
+	a.events = append(a.events, "token")
+	if len(a.tokenErrors) != 0 {
+		err := a.tokenErrors[0]
+		a.tokenErrors = a.tokenErrors[1:]
+		if err != nil {
+			return "", err
+		}
+	}
+	return "token-fixture", nil
+}
+func (a *classifiedAPI) Register(ctx context.Context, candidate api.Candidate, token, publicKey string) (wireguard.Registration, error) {
+	a.events = append(a.events, "register:"+candidate.IP)
+	if err := a.registerErrors[candidate.IP]; err != nil {
+		return wireguard.Registration{}, err
+	}
+	return (cycleAPI{}).Register(ctx, candidate, token, publicKey)
+}
+
 func (a candidateListAPI) FetchServerList(context.Context) (api.ServerList, error) {
 	pf, offline := true, false
 	endpoints := make([]api.Endpoint, 0, a.count)
@@ -246,6 +281,19 @@ type countingProcess struct{ starts int }
 func (p *countingProcess) Start(string, []string) (Child, error) {
 	p.starts++
 	return nil, errors.New("unexpected child start")
+}
+
+type startedProcess struct {
+	starts int
+	child  *fakeChild
+}
+
+func (p *startedProcess) Start(string, []string) (Child, error) {
+	p.starts++
+	if p.child == nil {
+		p.child = &fakeChild{done: make(chan error)}
+	}
+	return p.child, nil
 }
 
 func TestBootstrapPublicIPRetriesBeforeAnySessionActivity(t *testing.T) {
@@ -439,7 +487,7 @@ func TestCandidateMinimumMaximumCleanupFreshBootstrapAndOuterBackoff(t *testing.
 		comparisonIPs = append(comparisonIPs, comparisonIP)
 		s.child = &fakeChild{done: make(chan error)}
 		s.current = fmt.Sprintf("gen-%d", len(attempts))
-		return errors.New("deterministic candidate failure")
+		return candidateFailure(errors.New("deterministic candidate failure"))
 	}
 	if err := s.Run(ctx); err != nil {
 		t.Fatal(err)
@@ -464,6 +512,189 @@ func TestCandidateMinimumMaximumCleanupFreshBootstrapAndOuterBackoff(t *testing.
 			t.Fatalf("failed endpoint %s was not cooled", endpoint)
 		}
 	}
+}
+
+func newClassificationSupervisor(client *classifiedAPI) (*Supervisor, *fakeFirewall, *fakePublisher, *countingProcess) {
+	fw := &fakeFirewall{}
+	publisher := &fakePublisher{}
+	process := &countingProcess{}
+	s := &Supervisor{
+		Config: config.Config{
+			CandidateMin:  3,
+			CandidateMax:  3,
+			ShutdownGrace: time.Millisecond,
+			TunnelTimeout: time.Millisecond,
+		},
+		API:       client,
+		Firewall:  fw,
+		Publisher: publisher,
+		Verifier:  &fakeVerifier{},
+		Process:   process,
+		Status:    health.NewStatus(),
+		PublicIP: func(context.Context, string, time.Duration) (netip.Addr, error) {
+			return netip.MustParseAddr("198.51.100.2"), nil
+		},
+		Now:      func() time.Time { return time.Unix(1, 0) },
+		Sleep:    func(context.Context, time.Duration) error { return nil },
+		cooldown: map[string]time.Time{},
+	}
+	return s, fw, publisher, process
+}
+
+func TestProbePrecedesTokenAndGlobalTokenFailureCoolsNothing(t *testing.T) {
+	client := &classifiedAPI{count: 3, tokenErrors: []error{errors.New("token service unavailable")}}
+	s, _, _, _ := newClassificationSupervisor(client)
+	err := s.runCycle(context.Background(), netip.MustParseAddr("198.51.100.1"))
+	if err == nil || classifyFailure(err) != failureGlobal {
+		t.Fatalf("error=%v class=%v", err, classifyFailure(err))
+	}
+	if strings.Join(client.events, ",") != "metadata,probe:192.0.2.1,token" {
+		t.Fatalf("operation order=%v", client.events)
+	}
+	if len(s.cooldown) != 0 {
+		t.Fatalf("global token outage cooled endpoints: %v", s.cooldown)
+	}
+}
+
+func TestGlobalTokenFailureEntersOuterBackoffAfterOneAttempt(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	client := &classifiedAPI{count: 3, tokenErrors: []error{errors.New("token service unavailable")}}
+	s, _, _, _ := newClassificationSupervisor(client)
+	outerBackoffs := 0
+	s.Sleep = func(context.Context, time.Duration) error {
+		if s.Status.State() != string(StateBackoff) {
+			t.Fatalf("state=%s", s.Status.State())
+		}
+		outerBackoffs++
+		cancel()
+		return context.Canceled
+	}
+	s.PublicIP = func(context.Context, string, time.Duration) (netip.Addr, error) {
+		return netip.MustParseAddr("198.51.100.1"), nil
+	}
+	if err := s.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if outerBackoffs != 1 || len(s.cooldown) != 0 || strings.Count(strings.Join(client.events, ","), "probe:") != 1 || strings.Count(strings.Join(client.events, ","), "token") != 1 {
+		t.Fatalf("backoffs=%d cooldown=%v events=%v", outerBackoffs, s.cooldown, client.events)
+	}
+}
+
+func TestLocalFailuresDoNotCoolOrContinueCandidateBatch(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*Supervisor, *fakeFirewall, *fakePublisher)
+	}{
+		{name: "firewall", setup: func(_ *Supervisor, fw *fakeFirewall, _ *fakePublisher) {
+			fw.applyErrors = map[int]error{1: errors.New("firewall failed")}
+		}},
+		{name: "key generation", setup: func(s *Supervisor, _ *fakeFirewall, _ *fakePublisher) {
+			s.generateKeyPair = func() (wireguard.KeyPair, error) { return wireguard.KeyPair{}, errors.New("key generation failed") }
+		}},
+		{name: "filesystem publication", setup: func(_ *Supervisor, _ *fakeFirewall, publisher *fakePublisher) {
+			publisher.publishCurrentErr = errors.New("filesystem failed")
+		}},
+		{name: "process start", setup: func(_ *Supervisor, _ *fakeFirewall, _ *fakePublisher) {}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &classifiedAPI{count: 3}
+			s, fw, publisher, process := newClassificationSupervisor(client)
+			tc.setup(s, fw, publisher)
+			err := s.runCycle(context.Background(), netip.MustParseAddr("198.51.100.1"))
+			if err == nil || classifyFailure(err) != failureLocal {
+				t.Fatalf("error=%v class=%v", err, classifyFailure(err))
+			}
+			if len(s.cooldown) != 0 || s.child != nil || s.current != "" || strings.Count(strings.Join(client.events, ","), "probe:") > 1 {
+				t.Fatalf("local failure cooled or continued: cooldown=%v events=%v", s.cooldown, client.events)
+			}
+			if tc.name == "process start" && process.starts != 1 {
+				t.Fatalf("process starts=%d", process.starts)
+			}
+		})
+	}
+}
+
+func TestCandidateFailuresCoolOnlyAffectedEndpointAndContinueDistinctly(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*classifiedAPI)
+		want  string
+	}{
+		{name: "probe", setup: func(client *classifiedAPI) {
+			client.probeErrors = map[string]error{"192.0.2.1": errors.New("probe failed")}
+			client.tokenErrors = []error{errors.New("global stop")}
+		}, want: "metadata,probe:192.0.2.1,probe:192.0.2.2,token"},
+		{name: "registration", setup: func(client *classifiedAPI) {
+			client.registerErrors = map[string]error{"192.0.2.1": errors.New("registration failed")}
+			client.tokenErrors = []error{nil, errors.New("global stop")}
+		}, want: "metadata,probe:192.0.2.1,token,register:192.0.2.1,probe:192.0.2.2,token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &classifiedAPI{count: 3}
+			tc.setup(client)
+			s, _, _, _ := newClassificationSupervisor(client)
+			err := s.runCycle(context.Background(), netip.MustParseAddr("198.51.100.1"))
+			if err == nil || classifyFailure(err) != failureGlobal {
+				t.Fatalf("error=%v class=%v", err, classifyFailure(err))
+			}
+			if strings.Join(client.events, ",") != tc.want {
+				t.Fatalf("events=%v", client.events)
+			}
+			if len(s.cooldown) != 1 || s.cooldown["192.0.2.1"].IsZero() {
+				t.Fatalf("cooldown=%v", s.cooldown)
+			}
+		})
+	}
+}
+
+func TestAuthenticationFailureRemainsClassifiedAndUsesConfiguredRetry(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	client := &classifiedAPI{count: 3, tokenErrors: []error{&api.AuthError{Err: errors.New("rejected")}}}
+	s, _, _, _ := newClassificationSupervisor(client)
+	s.Config.AuthRetry = 15 * time.Minute
+	s.PublicIP = func(context.Context, string, time.Duration) (netip.Addr, error) {
+		return netip.MustParseAddr("198.51.100.1"), nil
+	}
+	var delay time.Duration
+	s.Sleep = func(_ context.Context, got time.Duration) error {
+		delay = got
+		cancel()
+		return context.Canceled
+	}
+	if err := s.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if delay != 15*time.Minute || len(s.cooldown) != 0 || s.Status.Ready() {
+		t.Fatalf("delay=%s cooldown=%v ready=%v", delay, s.cooldown, s.Status.Ready())
+	}
+}
+
+func TestTunnelVerificationAndEstablishedHealthFailuresAreCandidateSpecific(t *testing.T) {
+	t.Run("verification timeout", func(t *testing.T) {
+		process := &startedProcess{}
+		nowCalls := 0
+		s := Supervisor{
+			Config: config.Config{TunnelTimeout: time.Second}, Firewall: &fakeFirewall{}, Publisher: &fakePublisher{},
+			Verifier: &fakeVerifier{errors: []error{errors.New("verification failed")}}, Process: process, Status: health.NewStatus(),
+			Now: func() time.Time { nowCalls++; return time.Unix(int64(nowCalls*2), 0) }, Sleep: func(context.Context, time.Duration) error { return nil },
+		}
+		err := s.startAndVerify(context.Background(), "/run/pia/sessions/gen", "10.0.0.1", activeEndpoint(), netip.MustParseAddr("198.51.100.1"))
+		if err == nil || classifyFailure(err) != failureCandidate {
+			t.Fatalf("error=%v class=%v", err, classifyFailure(err))
+		}
+	})
+	t.Run("established health threshold", func(t *testing.T) {
+		s := Supervisor{
+			Config:   config.Config{HealthInterval: time.Second, HealthFailures: 1, SessionMaxAge: time.Hour},
+			Verifier: &fakeVerifier{errors: []error{errors.New("health failed")}}, Firewall: &fakeFirewall{}, Publisher: &fakePublisher{}, Status: health.NewStatus(),
+			child: &fakeChild{done: make(chan error)}, current: "gen", Now: func() time.Time { return time.Unix(1, 0) }, Sleep: func(context.Context, time.Duration) error { return nil },
+		}
+		err := s.monitorHealthy(context.Background(), api.Candidate{RegionID: "ca"}, activeEndpoint(), netip.MustParseAddr("198.51.100.1"))
+		if err == nil || classifyFailure(err) != failureCandidate {
+			t.Fatalf("error=%v class=%v", err, classifyFailure(err))
+		}
+	})
 }
 
 func TestCyclePublicationAndFirewallFailuresPropagate(t *testing.T) {
@@ -493,8 +724,9 @@ func TestCyclePublicationAndFirewallFailuresPropagate(t *testing.T) {
 		wantState firewall.State
 	}{
 		{name: "selection bootstrap", failCall: 0, wantState: firewall.Bootstrap},
-		{name: "candidate bootstrap", failCall: 1, wantState: firewall.Bootstrap},
-		{name: "registration endpoint", failCall: 2, wantState: firewall.Selected},
+		{name: "candidate probe endpoint", failCall: 1, wantState: firewall.Selected},
+		{name: "token bootstrap", failCall: 2, wantState: firewall.Bootstrap},
+		{name: "registration endpoint", failCall: 3, wantState: firewall.Selected},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fw := &fakeFirewall{applyErrors: map[int]error{tc.failCall: errors.New("firewall failed")}}
@@ -811,7 +1043,7 @@ func TestProactiveRotation(t *testing.T) {
 		}
 		return value
 	}, child: &fakeChild{done: make(chan error)}}
-	if err := s.monitorHealthy(context.Background(), api.Candidate{}, firewall.Endpoint{}, netip.Addr{}); err == nil || !strings.Contains(err.Error(), "proactive") {
+	if err := s.monitorHealthy(context.Background(), api.Candidate{}, firewall.Endpoint{}, netip.Addr{}); err == nil || !strings.Contains(err.Error(), "proactive") || classifyFailure(err) != failureRotation {
 		t.Fatalf("error=%v", err)
 	}
 }

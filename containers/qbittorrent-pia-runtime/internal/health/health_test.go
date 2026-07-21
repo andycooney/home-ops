@@ -35,7 +35,11 @@ func TestLivenessReadinessSeparationAndRecoverableOutage(t *testing.T) {
 }
 
 func TestPublicIPParsingDoesNotRequireLoggingValue(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("fl=1\nip=192.0.2.44\nts=1\n")) }))
+	connectionClose := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		connectionClose = request.Close
+		_, _ = w.Write([]byte("fl=1\nip=192.0.2.44\nts=1\n"))
+	}))
 	defer server.Close()
 	ip, err := PreTunnelPublicIP(context.Background(), server.URL, time.Second)
 	if err != nil {
@@ -43,6 +47,9 @@ func TestPublicIPParsingDoesNotRequireLoggingValue(t *testing.T) {
 	}
 	if ip.String() != "192.0.2.44" {
 		t.Fatalf("ip=%v", ip)
+	}
+	if !connectionClose {
+		t.Fatal("bootstrap public-IP request permitted connection reuse")
 	}
 }
 

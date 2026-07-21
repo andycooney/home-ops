@@ -139,7 +139,7 @@ func (v Verifier) Verify(ctx context.Context, preTunnelIP netip.Addr) (Result, e
 		return Result{}, errors.New("tunneled DNS failed")
 	}
 	dialer := &net.Dialer{Timeout: v.Timeout, Control: control}
-	transport := &http.Transport{DialContext: dialer.DialContext, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: v.RootCAs}}
+	transport := &http.Transport{DisableKeepAlives: true, DialContext: dialer.DialContext, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: v.RootCAs}}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: v.Timeout}
 	ip, err := publicIP(ctx, client, v.HTTPSURL)
@@ -160,7 +160,9 @@ func (v Verifier) Verify(ctx context.Context, preTunnelIP netip.Addr) (Result, e
 }
 
 func PreTunnelPublicIP(ctx context.Context, endpoint string, timeout time.Duration) (netip.Addr, error) {
-	client := &http.Client{Timeout: timeout}
+	transport := &http.Transport{DisableKeepAlives: true}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Timeout: timeout, Transport: transport}
 	return publicIP(ctx, client, endpoint)
 }
 
@@ -169,6 +171,7 @@ func publicIP(ctx context.Context, client *http.Client, endpoint string) (netip.
 	if err != nil {
 		return netip.Addr{}, err
 	}
+	req.Close = true
 	resp, err := client.Do(req)
 	if err != nil {
 		return netip.Addr{}, err

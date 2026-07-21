@@ -72,7 +72,10 @@ func (c *Client) FetchServerList(ctx context.Context) (ServerList, error) {
 	if err != nil {
 		return ServerList{}, err
 	}
-	resp, err := c.client().Do(req)
+	req.Close = true
+	client := c.client()
+	defer client.CloseIdleConnections()
+	resp, err := client.Do(req)
 	if err != nil {
 		return ServerList{}, fmt.Errorf("server metadata request failed")
 	}
@@ -197,7 +200,10 @@ func (c *Client) Token(ctx context.Context, username, password string) (string, 
 		return "", err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	resp, err := c.client().Do(req)
+	req.Close = true
+	client := c.client()
+	defer client.CloseIdleConnections()
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", errors.New("token request failed")
 	}
@@ -228,12 +234,13 @@ func (c *Client) Register(ctx context.Context, candidate Candidate, token, publi
 	if err != nil {
 		return wireguard.Registration{}, err
 	}
+	req.Close = true
 	dialer := net.Dialer{Timeout: c.ProbeTimeout}
 	roots, err := c.roots()
 	if err != nil {
 		return wireguard.Registration{}, err
 	}
-	transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: candidate.Hostname, RootCAs: roots}, DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+	transport := &http.Transport{DisableKeepAlives: true, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: candidate.Hostname, RootCAs: roots}, DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
 		return dialer.DialContext(ctx, network, net.JoinHostPort(candidate.IP, strconv.Itoa(int(candidate.Port))))
 	}}
 	defer transport.CloseIdleConnections()
@@ -295,7 +302,7 @@ func (c *Client) client() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return &http.Client{Timeout: 15 * time.Second}
+	return &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
 }
 func decodeJSON(r io.Reader, target any) error {
 	decoder := json.NewDecoder(io.LimitReader(r, maxResponseBytes))

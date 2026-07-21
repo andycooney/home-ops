@@ -148,12 +148,64 @@ func TestUIDServiceRepliesAreNarrowFamilyMatchedAndOrdered(t *testing.T) {
 func TestTransitionProtocolIsNarrow(t *testing.T) {
 	endpoint := Endpoint{IP: netip.MustParseAddr("192.0.2.10"), Port: 1337, PFGateway: netip.MustParseAddr("192.0.2.20")}
 	selected, _ := Transaction(testConfig(), Selected, endpoint, false)
-	if !strings.Contains(selected, "-p tcp -d 192.0.2.10 --dport 1337") {
+	if !strings.Contains(selected, "-m owner --uid-owner 0 -p tcp -d 192.0.2.10 --dport 1337") {
 		t.Fatal("registration TLS exception missing")
 	}
 	healthy, _ := Transaction(testConfig(), Healthy, endpoint, false)
 	if !strings.Contains(healthy, "-p udp -d 192.0.2.10 --dport 1337") || strings.Contains(healthy, "-p tcp -d 192.0.2.10") {
 		t.Fatal("healthy endpoint exception is not UDP-only")
+	}
+}
+
+func TestRootEgressIsStateScopedBeforeGenericConntrack(t *testing.T) {
+	endpoint := Endpoint{IP: netip.MustParseAddr("192.0.2.10"), Port: 1337, PFGateway: netip.MustParseAddr("192.0.2.20")}
+	rootDrop := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -j DROP"
+	established := "-A PIA_RUNTIME_OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+	bootstrapDNSUDP := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -p udp --dport 53 -j ACCEPT"
+	bootstrapDNSTCP := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -p tcp --dport 53 -j ACCEPT"
+	bootstrapHTTPS := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -p tcp --dport 443 -j ACCEPT"
+	registration := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -p tcp -d 192.0.2.10 --dport 1337 -j ACCEPT"
+	rootTunnel := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -o tun0 -j ACCEPT"
+	wireGuard := "-A PIA_RUNTIME_OUTPUT -p udp -d 192.0.2.10 --dport 1337 -j ACCEPT"
+	for _, state := range []State{Bootstrap, Selected, Verifying, Healthy, Locked} {
+		tx, err := Transaction(testConfig(), state, endpointFor(state, endpoint), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dropIndex, establishedIndex := strings.Index(tx, rootDrop), strings.Index(tx, established)
+		if dropIndex < 0 || establishedIndex < 0 || dropIndex > establishedIndex {
+			t.Fatalf("%s permits established root flows around the UID policy", state)
+		}
+		for _, identityDrop := range []string{
+			"-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 1000 -j DROP",
+			"-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 65532 -j DROP",
+		} {
+			if index := strings.Index(tx, identityDrop); index < 0 || index > dropIndex {
+				t.Fatalf("%s identity ordering is unsafe for %q", state, identityDrop)
+			}
+		}
+		allows := func(rule string) bool { return strings.Contains(tx, rule) }
+		switch state {
+		case Bootstrap:
+			if !allows(bootstrapDNSUDP) || !allows(bootstrapDNSTCP) || !allows(bootstrapHTTPS) || allows(registration) || allows(rootTunnel) || allows(wireGuard) {
+				t.Fatalf("BOOTSTRAP root policy is not DNS/HTTPS-only")
+			}
+		case Selected:
+			if !allows(registration) || allows(bootstrapDNSUDP) || allows(bootstrapDNSTCP) || allows(bootstrapHTTPS) || allows(rootTunnel) || allows(wireGuard) {
+				t.Fatalf("SELECTED root policy is not registration-only")
+			}
+		case Verifying, Healthy:
+			if !allows(rootTunnel) || !allows(wireGuard) || allows(bootstrapDNSUDP) || allows(bootstrapDNSTCP) || allows(bootstrapHTTPS) || allows(registration) {
+				t.Fatalf("%s root policy is not tunnel-only with the exact kernel WireGuard exception", state)
+			}
+			if strings.Index(tx, rootTunnel) > dropIndex {
+				t.Fatalf("%s root tunnel allowance follows the root drop", state)
+			}
+		case Locked:
+			if allows(bootstrapDNSUDP) || allows(bootstrapDNSTCP) || allows(bootstrapHTTPS) || allows(registration) || allows(rootTunnel) || allows(wireGuard) {
+				t.Fatal("LOCKED permits root egress")
+			}
+		}
 	}
 }
 

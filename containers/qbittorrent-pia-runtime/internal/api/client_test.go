@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -16,9 +17,22 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+type closingTransport struct {
+	body       string
+	requestEOF bool
+	closed     int
+}
+
+func (t *closingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	t.requestEOF = request.Close
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(t.body)), Header: make(http.Header)}, nil
+}
+func (t *closingTransport) CloseIdleConnections() { t.closed++ }
 
 func fixture(t *testing.T, name string) *os.File {
 	t.Helper()
@@ -123,11 +137,13 @@ func TestAuthenticationClassification(t *testing.T) {
 
 func TestTLSHostnameToIPAndCertificateValidation(t *testing.T) {
 	cert, caPEM := testCertificate(t, "pia.test")
+	var registrationConnectionClose atomic.Bool
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		registrationConnectionClose.Store(r.Close)
 		if r.URL.Path != "/addKey" || r.URL.Query().Get("pt") == "" || r.URL.Query().Get("pubkey") == "" {
 			t.Error("registration request missing fields")
 		}
@@ -153,6 +169,9 @@ func TestTLSHostnameToIPAndCertificateValidation(t *testing.T) {
 	if registration.ServerIP != "10.0.0.1" {
 		t.Fatal("registration parse failed")
 	}
+	if !registrationConnectionClose.Load() {
+		t.Fatal("registration request permitted connection reuse")
+	}
 	candidate.Hostname = "wrong.test"
 	if err := client.Probe(context.Background(), candidate); err == nil {
 		t.Fatal("certificate hostname validation was disabled")
@@ -167,6 +186,42 @@ func TestContextCancellation(t *testing.T) {
 	client := &Client{ServerListURL: server.URL}
 	if _, err := client.FetchServerList(ctx); err == nil {
 		t.Fatal("expected cancellation")
+	}
+}
+
+func TestBootstrapHTTPRequestsDisableReuseAndCloseIdleConnections(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		run  func(*Client) error
+	}{
+		{
+			name: "metadata",
+			body: `{"groups":{"wg":[{"name":"wireguard"}]},"regions":[{"id":"ca","name":"Canada","country":"CA","port_forward":true,"offline":false,"servers":{"wg":[]}}]}`,
+			run: func(client *Client) error {
+				_, err := client.FetchServerList(context.Background())
+				return err
+			},
+		},
+		{
+			name: "token",
+			body: `{"token":"fixture-token-sensitive"}`,
+			run: func(client *Client) error {
+				_, err := client.Token(context.Background(), "fixture-user-sensitive", "fixture-password-sensitive")
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			transport := &closingTransport{body: tc.body}
+			client := &Client{HTTP: &http.Client{Transport: transport}, ServerListURL: "https://metadata.example.invalid", TokenURL: "https://token.example.invalid"}
+			if err := tc.run(client); err != nil {
+				t.Fatal(err)
+			}
+			if !transport.requestEOF || transport.closed != 1 {
+				t.Fatalf("request close=%v idle closes=%d", transport.requestEOF, transport.closed)
+			}
+		})
 	}
 }
 

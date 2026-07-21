@@ -70,6 +70,55 @@ type Process interface {
 }
 type PublicIP func(context.Context, string, time.Duration) (netip.Addr, error)
 
+type failureClass uint8
+
+const (
+	failureLocal failureClass = iota
+	failureCandidate
+	failureRotation
+	failureGlobal
+	failureAuthentication
+)
+
+type classifiedFailure struct {
+	class failureClass
+	err   error
+}
+
+func (e *classifiedFailure) Error() string { return e.err.Error() }
+func (e *classifiedFailure) Unwrap() error { return e.err }
+
+func (c failureClass) String() string {
+	switch c {
+	case failureCandidate:
+		return "candidate"
+	case failureRotation:
+		return "rotation"
+	case failureGlobal:
+		return "global-service"
+	case failureAuthentication:
+		return "authentication"
+	default:
+		return "local-runtime"
+	}
+}
+
+func classifyFailure(err error) failureClass {
+	if api.IsAuthentication(err) {
+		return failureAuthentication
+	}
+	var classified *classifiedFailure
+	if errors.As(err, &classified) {
+		return classified.class
+	}
+	return failureLocal
+}
+
+func candidateFailure(err error) error { return &classifiedFailure{class: failureCandidate, err: err} }
+func rotationFailure(err error) error  { return &classifiedFailure{class: failureRotation, err: err} }
+func globalFailure(err error) error    { return &classifiedFailure{class: failureGlobal, err: err} }
+func localFailure(err error) error     { return &classifiedFailure{class: failureLocal, err: err} }
+
 type Supervisor struct {
 	Config          config.Config
 	API             API
@@ -89,6 +138,7 @@ type Supervisor struct {
 	cleanupRequired bool
 	cycle           func(context.Context, netip.Addr) error
 	attempt         func(context.Context, api.Candidate, netip.Addr) error
+	generateKeyPair func() (wireguard.KeyPair, error)
 }
 
 func (s *Supervisor) Run(ctx context.Context) error {
@@ -208,16 +258,23 @@ func (s *Supervisor) runCycle(ctx context.Context, preTunnelIP netip.Addr) error
 		if err == nil {
 			return nil
 		}
-		if api.IsAuthentication(err) {
+		failure := classifyFailure(err)
+		s.log("candidate attempt failed classification=%s", failure)
+		if failure == failureAuthentication {
 			return err
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		lastErr = err
-		s.cool(candidate)
 		if cleanupErr := s.retryCandidateCleanup(ctx); cleanupErr != nil {
 			return errors.Join(err, cleanupErr)
+		}
+		if failure != failureCandidate && failure != failureRotation {
+			return err
+		}
+		if failure == failureCandidate {
+			s.cool(candidate)
 		}
 		if index+1 < len(candidates) {
 			freshIP, bootstrapErr := s.bootstrapPublicIP(ctx)
@@ -255,43 +312,56 @@ func (s *Supervisor) retryCandidateCleanup(ctx context.Context) error {
 }
 
 func (s *Supervisor) attemptCandidate(ctx context.Context, candidate api.Candidate, preTunnelIP netip.Addr) error {
+	registrationEndpoint := firewall.Endpoint{IP: netip.MustParseAddr(candidate.IP), Port: candidate.Port}
+	if err := s.Firewall.Apply(ctx, firewall.Selected, registrationEndpoint); err != nil {
+		return localFailure(err)
+	}
+	if err := s.API.Probe(ctx, candidate); err != nil {
+		return candidateFailure(err)
+	}
 	if err := s.Firewall.Apply(ctx, firewall.Bootstrap, firewall.Endpoint{}); err != nil {
-		return err
+		return localFailure(err)
 	}
 	token, err := s.API.Token(ctx, s.Config.Username, s.Config.Password)
 	if err != nil {
-		return err
+		if api.IsAuthentication(err) {
+			return err
+		}
+		return globalFailure(err)
 	}
-	keys, err := wireguard.GenerateKeyPair()
+	generateKeyPair := wireguard.GenerateKeyPair
+	if s.generateKeyPair != nil {
+		generateKeyPair = s.generateKeyPair
+	}
+	keys, err := generateKeyPair()
 	if err != nil {
-		return err
+		return localFailure(err)
 	}
-	registrationEndpoint := firewall.Endpoint{IP: netip.MustParseAddr(candidate.IP), Port: candidate.Port}
 	if err := s.Firewall.Apply(ctx, firewall.Selected, registrationEndpoint); err != nil {
-		return err
-	}
-	if err := s.API.Probe(ctx, candidate); err != nil {
-		return err
+		return localFailure(err)
 	}
 	s.transition(StateRegistering, false)
 	registration, err := s.API.Register(ctx, candidate, token, keys.Public)
 	if err != nil {
-		return err
+		if api.IsAuthentication(err) {
+			return err
+		}
+		return candidateFailure(err)
 	}
 	wgConfig, err := wireguard.BuildConfig(keys, candidate.IP, registration)
 	if err != nil {
-		return err
+		return candidateFailure(err)
 	}
 	generationID, err := newGenerationID(s.Now())
 	if err != nil {
-		return err
+		return localFailure(err)
 	}
 	tunnelIP := netip.MustParseAddr(candidate.IP)
 	pfGateway := netip.MustParseAddr(registration.ServerIP)
 	generation := session.Generation{ID: generationID, Region: candidate.RegionID, Endpoint: netip.AddrPortFrom(tunnelIP, registration.ServerPort).String(), TLSHostname: candidate.Hostname, WGGateway: registration.ServerIP, PFGateway: registration.ServerIP, Token: token, WGConfig: wgConfig}
 	dir, err := s.Publisher.PublishCurrent(generation)
 	if err != nil {
-		return err
+		return localFailure(err)
 	}
 	s.current = generationID
 	tunnelEndpoint := firewall.Endpoint{IP: tunnelIP, Port: registration.ServerPort, PFGateway: pfGateway}
@@ -304,12 +374,12 @@ func (s *Supervisor) attemptCandidate(ctx context.Context, candidate api.Candida
 func (s *Supervisor) startAndVerify(ctx context.Context, dir, dns string, endpoint firewall.Endpoint, preTunnelIP netip.Addr) error {
 	s.transition(StateStarting, false)
 	if err := s.Firewall.Apply(ctx, firewall.Verifying, endpoint); err != nil {
-		return s.lockAndStop(fmt.Errorf("apply verifying firewall: %w", err))
+		return localFailure(s.lockAndStop(fmt.Errorf("apply verifying firewall: %w", err)))
 	}
 	env := ChildEnvironment(os.Environ(), dir+"/wg0.conf")
 	child, err := s.Process.Start(s.Config.GluetunEntrypoint, env)
 	if err != nil {
-		return errors.New("start Gluetun child failed")
+		return localFailure(errors.New("start Gluetun child failed"))
 	}
 	s.child = child
 	deadline := s.Now().Add(s.Config.TunnelTimeout)
@@ -320,7 +390,7 @@ func (s *Supervisor) startAndVerify(ctx context.Context, dir, dns string, endpoi
 			if err == nil {
 				err = errors.New("gluetun exited")
 			}
-			return err
+			return candidateFailure(err)
 		default:
 		}
 		if verifier, ok := s.Verifier.(*health.Verifier); ok {
@@ -330,10 +400,10 @@ func (s *Supervisor) startAndVerify(ctx context.Context, dir, dns string, endpoi
 			return s.promoteReady(ctx, endpoint)
 		}
 		if err := s.Sleep(ctx, 5*time.Second); err != nil {
-			return err
+			return localFailure(err)
 		}
 	}
-	return errors.New("tunnel verification timeout")
+	return candidateFailure(errors.New("tunnel verification timeout"))
 }
 
 func (s *Supervisor) monitorHealthy(ctx context.Context, candidate api.Candidate, endpoint firewall.Endpoint, preTunnelIP netip.Addr) error {
@@ -341,7 +411,7 @@ func (s *Supervisor) monitorHealthy(ctx context.Context, candidate api.Candidate
 	failures := 0
 	for {
 		if s.Now().Sub(started) >= s.Config.SessionMaxAge {
-			return errors.New("proactive session rotation")
+			return rotationFailure(errors.New("proactive session rotation"))
 		}
 		select {
 		case <-ctx.Done():
@@ -350,33 +420,33 @@ func (s *Supervisor) monitorHealthy(ctx context.Context, candidate api.Candidate
 			if err == nil {
 				err = errors.New("gluetun exited")
 			}
-			return err
+			return candidateFailure(err)
 		default:
 		}
 		if err := s.Sleep(ctx, s.Config.HealthInterval); err != nil {
-			return err
+			return localFailure(err)
 		}
 		_, err := s.Verifier.Verify(ctx, preTunnelIP)
 		if err == nil {
 			failures = 0
 			if !s.Status.Ready() {
 				if err := s.promoteReady(ctx, endpoint); err != nil {
-					return err
+					return localFailure(err)
 				}
 			}
 			if err := s.syncForwardedPort(ctx, endpoint); err != nil {
-				return err
+				return localFailure(err)
 			}
 			continue
 		}
 		failures++
 		if failures == 1 {
 			if err := s.restrictForVerification(ctx, endpoint); err != nil {
-				return err
+				return localFailure(err)
 			}
 		}
 		if failures >= s.Config.HealthFailures {
-			return fmt.Errorf("health failure threshold reached for %s", candidate.RegionID)
+			return candidateFailure(fmt.Errorf("health failure threshold reached for %s", candidate.RegionID))
 		}
 	}
 }

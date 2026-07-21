@@ -132,6 +132,18 @@ func Transaction(cfg Config, state State, endpoint Endpoint, ipv6 bool) (string,
 		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d -o %s -p tcp -d %s --dport %d -j ACCEPT\n", cfg.PFHelperUID, cfg.Interface, endpoint.PFGateway, PFAPIPort)
 	}
 	fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d -j DROP\n", cfg.PFHelperUID)
+	if state == Bootstrap {
+		b.WriteString("-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -p udp --dport 53 -j ACCEPT\n")
+		b.WriteString("-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -p tcp --dport 53 -j ACCEPT\n")
+		b.WriteString("-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -p tcp --dport 443 -j ACCEPT\n")
+	}
+	if state == Selected && endpoint.IP.Is6() == ipv6 {
+		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -p tcp -d %s --dport %d -j ACCEPT\n", endpoint.IP, endpoint.Port)
+	}
+	if state == Verifying || state == Healthy {
+		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -o %s -j ACCEPT\n", cfg.Interface)
+	}
+	b.WriteString("-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -j DROP\n")
 	b.WriteString("-A PIA_RUNTIME_OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n")
 	for _, subnet := range cfg.AllowedSubnets {
 		if subnet.Addr().Is6() != ipv6 {
@@ -140,20 +152,10 @@ func Transaction(cfg Config, state State, endpoint Endpoint, ipv6 bool) (string,
 		fmt.Fprintf(&b, "-A PIA_RUNTIME_INPUT -s %s -p tcp --dport %d -j ACCEPT\n", subnet, cfg.ServicePort)
 		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -d %s -j ACCEPT\n", subnet)
 	}
-	if state == Bootstrap {
-		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -p udp --dport 53 -j ACCEPT\n-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -p tcp -m multiport --dports 53,443 -j ACCEPT\n")
-	}
-	if state == Selected || state == Verifying || state == Healthy {
-		protocol := "udp"
-		if state == Selected {
-			protocol = "tcp"
-		}
-		if endpoint.IP.Is6() == ipv6 {
-			fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -p %s -d %s --dport %d -j ACCEPT\n", protocol, endpoint.IP, endpoint.Port)
-		}
-	}
 	if state == Verifying || state == Healthy {
-		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -o %s -j ACCEPT\n", cfg.Interface)
+		if endpoint.IP.Is6() == ipv6 {
+			fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -p udp -d %s --dport %d -j ACCEPT\n", endpoint.IP, endpoint.Port)
+		}
 	}
 	if state == Healthy {
 		if endpoint.ForwardedPort != 0 && endpoint.PFGateway.Is6() == ipv6 {
