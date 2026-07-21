@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!go.mod
+!cmd/**
+!internal/**
+!third_party/**
