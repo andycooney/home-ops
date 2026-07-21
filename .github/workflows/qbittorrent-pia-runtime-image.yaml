@@ -73,7 +73,7 @@ jobs:
           echo "short-revision=${REVISION::12}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: containers/qbittorrent-pia-runtime/go.mod
