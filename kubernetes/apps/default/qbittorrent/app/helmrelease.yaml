@@ -136,7 +136,10 @@ spec:
               allowPrivilegeEscalation: false
               capabilities:
                 drop: ["ALL"]
-                add: ["NET_ADMIN"]
+                add:
+                  - NET_ADMIN
+                  - CHOWN
+                  - DAC_OVERRIDE
             resources:
               requests:
                 cpu: 5m
@@ -223,6 +226,7 @@ spec:
               - path: /run/pia
             port-sync:
               - path: /run/pia
+                readOnly: true
             pia-port-forward:
               - path: /run/pia
       scripts:
