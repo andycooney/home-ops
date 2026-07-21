@@ -1,175 +1,204 @@
 #!/usr/bin/env sh
 set -eu
 
-PORT_FILE="${PORT_FILE:-/tmp/gluetun/forwarded_port}"
-RENEW_SECONDS="${RENEW_SECONDS:-43200}"
-STARTUP_TIMEOUT_SECONDS="${STARTUP_TIMEOUT_SECONDS:-180}"
-PIA_CA_CERT="${PIA_CA_CERT:-/scripts/pia-ca.rsa.4096.crt}"
+umask 077
 
-PIA_USER="${VPN_PORT_FORWARDING_USERNAME:-}"
-PIA_PASS="${VPN_PORT_FORWARDING_PASSWORD:-}"
-PF_GATEWAY="${PIA_PF_GATEWAY:-}"
-PF_HOSTNAME="${PIA_PF_HOSTNAME:-}"
+RUNTIME_DIR="${RUNTIME_DIR:-/run/pia}"
+READY_LINK="${RUNTIME_DIR}/ready"
+RENEW_SECONDS="${RENEW_SECONDS:-900}"
+POLL_SECONDS="${POLL_SECONDS:-5}"
+PIA_CA_CERT="${PIA_CA_CERT:-/scripts/pia-ca.rsa.4096.crt}"
+RUN_ONCE="${PIA_PF_RUN_ONCE:-0}"
+
+SNAPSHOT_TARGET=""
+GENERATION=""
+GENERATION_DIR=""
+PF_DIR=""
+TLS_HOSTNAME=""
+PF_GATEWAY=""
+PAYLOAD=""
+SIGNATURE=""
+PORT=""
+EXPIRES_AT=""
+PAYLOAD_TMP=""
+SIGNATURE_TMP=""
+EXPIRES_TMP=""
+PORT_TMP=""
 
 log() {
   printf '%s %s\n' "$(date -Iseconds)" "$*" >&2
 }
 
-need_env() {
-  var="$1"
-  eval val="\${$var:-}"
-  if [ -z "$val" ]; then
-    log "ERROR missing required env: $var"
-    exit 1
-  fi
+valid_generation() {
+  case "$1" in
+    ""|.|..|*/*|*\\*|*[!A-Za-z0-9._-]*) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
-need_env PIA_USER
-need_env PIA_PASS
-need_env PF_GATEWAY
-need_env PF_HOSTNAME
+snapshot_ready_generation() {
+  target="$(readlink "${READY_LINK}" 2>/dev/null)" || return 1
+  case "${target}" in
+    sessions/*) generation="${target#sessions/}" ;;
+    *) return 1 ;;
+  esac
+  valid_generation "${generation}" || return 1
 
-wait_for_vpn() {
-  deadline=$(( $(date +%s) + STARTUP_TIMEOUT_SECONDS ))
+  generation_dir="${RUNTIME_DIR}/sessions/${generation}"
+  [ -d "${generation_dir}/pf" ] || return 1
+  [ "$(cat "${generation_dir}/generation" 2>/dev/null)" = "${generation}" ] || return 1
+  [ "$(readlink "${READY_LINK}" 2>/dev/null)" = "${target}" ] || return 1
 
-  while [ "$(date +%s)" -lt "$deadline" ]; do
-    if ip link show tun0 >/dev/null 2>&1; then
-      log "VPN interface tun0 exists"
-      return 0
-    fi
-    log "waiting for VPN/tun0..."
-    sleep 5
-  done
-
-  log "ERROR VPN did not become ready before timeout"
-  return 1
+  SNAPSHOT_TARGET="${target}"
+  GENERATION="${generation}"
+  GENERATION_DIR="${generation_dir}"
+  PF_DIR="${generation_dir}/pf"
 }
 
-get_token() {
+generation_is_still_ready() {
+  [ -n "${GENERATION}" ] || return 1
+  [ "$(readlink "${READY_LINK}" 2>/dev/null)" = "${SNAPSHOT_TARGET}" ] || return 1
+  [ "$(cat "${GENERATION_DIR}/generation" 2>/dev/null)" = "${GENERATION}" ] || return 1
+}
+
+load_generation_metadata() {
+  TLS_HOSTNAME="$(cat "${GENERATION_DIR}/tls-hostname" 2>/dev/null)" || return 1
+  PF_GATEWAY="$(cat "${GENERATION_DIR}/pf-gateway" 2>/dev/null)" || return 1
+  [ -s "${GENERATION_DIR}/pia.token" ] || return 1
+
+  case "${TLS_HOSTNAME}" in
+    ""|.*|*..*|*[!A-Za-z0-9.-]*) return 1 ;;
+  esac
+  case "${PF_GATEWAY}" in
+    ""|*[!A-Fa-f0-9:.]*) return 1 ;;
+  esac
+  generation_is_still_ready
+}
+
+connect_gateway() {
+  case "${PF_GATEWAY}" in
+    *:*) printf '[%s]' "${PF_GATEWAY}" ;;
+    *) printf '%s' "${PF_GATEWAY}" ;;
+  esac
+}
+
+request_signature() {
   response="$(
-    curl -fsS --retry 3 --retry-delay 5 \
-      -u "${PIA_USER}:${PIA_PASS}" \
-      "https://privateinternetaccess.com/gtoken/generateToken"
-  )"
+    curl -fsS -m 10 \
+      --interface tun0 \
+      --connect-to "${TLS_HOSTNAME}:19999:$(connect_gateway):19999" \
+      --cacert "${PIA_CA_CERT}" \
+      -G \
+      --data-urlencode "token@${GENERATION_DIR}/pia.token" \
+      "https://${TLS_HOSTNAME}:19999/getSignature"
+  )" || return 1
 
-  token="$(printf '%s' "$response" | jq -r '.token // empty')"
+  PAYLOAD="$(printf '%s' "${response}" | jq -er 'select(type == "object" and .status == "OK") | .payload | select(type == "string" and length > 0)')" || return 1
+  SIGNATURE="$(printf '%s' "${response}" | jq -er 'select(type == "object" and .status == "OK") | .signature | select(type == "string" and length > 0)')" || return 1
 
-  if [ -z "$token" ] || [ "$token" = "null" ]; then
-    log "ERROR token response did not contain token: $response"
-    return 1
-  fi
-
-  log "PIA token acquired, length=$(printf '%s' "$token" | wc -c | tr -d ' ')"
-  printf '%s\n' "$token"
+  decoded="$(printf '%s' "${PAYLOAD}" | base64 -d 2>/dev/null)" || return 1
+  PORT="$(printf '%s' "${decoded}" | jq -er '.port | select(type == "number" and floor == . and . >= 1 and . <= 65535)')" || return 1
+  EXPIRES_AT="$(printf '%s' "${decoded}" | jq -er '.expires_at | select(type == "string" and length > 0)')" || return 1
 }
 
-get_signature() {
-  token="$1"
+cleanup_temporary_files() {
+  for path in "${PAYLOAD_TMP}" "${SIGNATURE_TMP}" "${EXPIRES_TMP}" "${PORT_TMP}"; do
+    [ -z "${path}" ] || rm -f -- "${path}"
+  done
+}
 
-  # This intentionally mirrors PIA manual-connections port_forwarding.sh:
-  # --connect-to maps PF_HOSTNAME to PF_GATEWAY while preserving TLS SNI/cert validation.
-  curl -sS -m 10 \
-    --connect-to "${PF_HOSTNAME}::${PF_GATEWAY}:" \
-    --cacert "${PIA_CA_CERT}" \
-    -G \
-    --data-urlencode "token=${token}" \
-    "https://${PF_HOSTNAME}:19999/getSignature"
+write_temporary_file() {
+  path="$1"
+  value="$2"
+  rm -f -- "${path}"
+  printf '%s\n' "${value}" > "${path}"
+  chmod 0600 "${path}"
+  sync -d "${path}"
+}
+
+prepare_binding_files() {
+  PAYLOAD_TMP="${PF_DIR}/.payload.tmp.$$"
+  SIGNATURE_TMP="${PF_DIR}/.signature.tmp.$$"
+  write_temporary_file "${PAYLOAD_TMP}" "${PAYLOAD}"
+  write_temporary_file "${SIGNATURE_TMP}" "${SIGNATURE}"
 }
 
 bind_port() {
-  payload="$1"
-  signature="$2"
+  response="$(
+    curl -fsS -m 10 \
+      --interface tun0 \
+      --connect-to "${TLS_HOSTNAME}:19999:$(connect_gateway):19999" \
+      --cacert "${PIA_CA_CERT}" \
+      -G \
+      --data-urlencode "payload@${PAYLOAD_TMP}" \
+      --data-urlencode "signature@${SIGNATURE_TMP}" \
+      "https://${TLS_HOSTNAME}:19999/bindPort"
+  )" || return 1
 
-  curl -sS -m 10 \
-    --connect-to "${PF_HOSTNAME}::${PF_GATEWAY}:" \
-    --cacert "${PIA_CA_CERT}" \
-    -G \
-    --data-urlencode "payload=${payload}" \
-    --data-urlencode "signature=${signature}" \
-    "https://${PF_HOSTNAME}:19999/bindPort"
+  printf '%s' "${response}" | jq -e 'type == "object" and .status == "OK"' >/dev/null
 }
 
-write_port_from_payload() {
-  payload="$1"
+publish_generation_files() {
+  generation_is_still_ready || return 1
 
-  port="$(
-    printf '%s' "$payload" \
-      | base64 -d 2>/dev/null \
-      | jq -r '.port // empty'
-  )"
+  EXPIRES_TMP="${PF_DIR}/.expires-at.tmp.$$"
+  PORT_TMP="${PF_DIR}/.port.tmp.$$"
+  write_temporary_file "${EXPIRES_TMP}" "${EXPIRES_AT}"
+  write_temporary_file "${PORT_TMP}" "$(printf '{"generation":"%s","port":%s}' "${GENERATION}" "${PORT}")"
 
-  expires_at="$(
-    printf '%s' "$payload" \
-      | base64 -d 2>/dev/null \
-      | jq -r '.expires_at // empty'
-  )"
-
-  if [ -z "$port" ]; then
-    log "ERROR could not parse forwarded port from payload"
-    return 1
-  fi
-
-  tmp="${PORT_FILE}.tmp"
-  printf '%s\n' "$port" > "$tmp"
-  chmod 0644 "$tmp"
-  mv "$tmp" "$PORT_FILE"
-
-  log "forwarded port written: ${port}"
-  [ -n "$expires_at" ] && log "forwarded port expires_at: ${expires_at}"
+  generation_is_still_ready || return 1
+  mv -f -- "${PAYLOAD_TMP}" "${PF_DIR}/payload"
+  PAYLOAD_TMP=""
+  mv -f -- "${SIGNATURE_TMP}" "${PF_DIR}/signature"
+  SIGNATURE_TMP=""
+  mv -f -- "${EXPIRES_TMP}" "${PF_DIR}/expires-at"
+  EXPIRES_TMP=""
+  mv -f -- "${PORT_TMP}" "${PF_DIR}/port"
+  PORT_TMP=""
+  sync -d "${PF_DIR}"
 }
 
-while true; do
-  wait_for_vpn || {
-    sleep 30
-    continue
-  }
+renew_generation() {
+  load_generation_metadata || return 1
+  request_signature || return 1
+  generation_is_still_ready || return 1
+  prepare_binding_files || return 1
+  bind_port || return 1
+  generation_is_still_ready || return 1
+  publish_generation_files || return 1
+  log "published active generation port metadata"
+}
 
-  log "requesting PIA token"
-  token="$(get_token || true)"
+wait_while_generation_ready() {
+  seconds="$1"
+  deadline=$(( $(date +%s) + seconds ))
+  while [ "$(date +%s)" -lt "${deadline}" ]; do
+    generation_is_still_ready || return 1
+    sleep "${POLL_SECONDS}"
+  done
+}
 
-  if [ -z "$token" ]; then
-    log "ERROR failed to obtain PIA token"
-    sleep 60
-    continue
-  fi
+main() {
+  trap cleanup_temporary_files EXIT
+  trap 'exit 0' HUP INT TERM
+  while true; do
+    if ! snapshot_ready_generation; then
+      log "waiting for an active ready generation"
+      [ "${RUN_ONCE}" = "1" ] && return 0
+      sleep "${POLL_SECONDS}"
+      continue
+    fi
 
-  log "requesting PIA port-forward signature via ${PF_HOSTNAME}/${PF_GATEWAY}"
-  payload_and_signature="$(get_signature "$token" 2>/tmp/pia-signature-error.log || true)"
+    if renew_generation; then
+      [ "${RUN_ONCE}" = "1" ] && return 0
+      wait_while_generation_ready "${RENEW_SECONDS}" || true
+      continue
+    fi
 
-  if [ -z "$payload_and_signature" ]; then
-    log "ERROR failed to obtain PIA port-forward signature: $(cat /tmp/pia-signature-error.log)"
-    sleep 60
-    continue
-  fi
+    log "port-forward operation failed; retrying while generation remains ready"
+    [ "${RUN_ONCE}" = "1" ] && return 1
+    wait_while_generation_ready 30 || true
+  done
+}
 
-  status="$(printf '%s' "$payload_and_signature" | jq -r '.status // empty' 2>/dev/null || true)"
-  if [ "$status" != "OK" ]; then
-    log "ERROR payload_and_signature status was not OK: $payload_and_signature"
-    sleep 60
-    continue
-  fi
-
-  payload="$(printf '%s' "$payload_and_signature" | jq -r '.payload')"
-  signature="$(printf '%s' "$payload_and_signature" | jq -r '.signature')"
-
-  log "binding PIA forwarded port"
-  bind_response="$(bind_port "$payload" "$signature" 2>/tmp/pia-bind-error.log || true)"
-
-  if [ -z "$bind_response" ]; then
-    log "ERROR bindPort failed: $(cat /tmp/pia-bind-error.log)"
-    sleep 60
-    continue
-  fi
-
-  bind_status="$(printf '%s' "$bind_response" | jq -r '.status // empty' 2>/dev/null || true)"
-  if [ "$bind_status" != "OK" ]; then
-    log "ERROR bindPort response was not OK: $bind_response"
-    sleep 60
-    continue
-  fi
-
-  write_port_from_payload "$payload" || true
-  log "bindPort status: ${bind_status}"
-  log "sleeping ${RENEW_SECONDS}s before renew"
-  sleep "$RENEW_SECONDS"
-done
+main "$@"
