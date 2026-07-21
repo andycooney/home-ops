@@ -101,8 +101,8 @@ run_sync() {
     RUNTIME_DIR="${runtime}" \
     READY_LINK_FOR_TEST="${runtime}/ready" \
     SLEEP_SWITCH_MARKER="${runtime}/.sleep-switched" \
-    SLEEP_COUNTER_FILE="${runtime}/.sleep-counter" \
     QBIT_STATE_FILE="${runtime}/.qbit-state" \
+    QBIT_GET_COUNTER_FILE="${runtime}/.qbit-get-counter" \
     TEST_QBIT_CURRENT=40000 \
     "$@" \
     sh "${sync_script}" >"${stdout}" 2>"${stderr}"
@@ -272,7 +272,7 @@ ln -s sessions/gen-one "${runtime}/ready"
 curl_log="${test_root}/sync-restart.curl"
 : > "${curl_log}"
 run_sync "${runtime}" "${curl_log}" "${test_root}/sync-restart.out" "${test_root}/sync-restart.err" \
-  PORT_SYNC_MAX_LOOPS=3 RESET_QBIT_ON_SLEEP_NUMBER=2 RESET_QBIT_VALUE=40000
+  PORT_SYNC_MAX_LOOPS=3 RESET_QBIT_ON_GET_NUMBER=3 RESET_QBIT_VALUE=40000
 assert_count "${curl_log}" '/api/v2/app/preferences' 3
 assert_count "${curl_log}" '/setPreferences' 2
 assert_count "${curl_log}" 'json={"listen_port":49152,"random_port":false}' 2
