@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/netip"
 	"os"
@@ -179,6 +180,29 @@ type bootstrapAPI struct {
 }
 
 type cycleAPI struct{}
+
+type candidateListAPI struct{ count int }
+
+func (a candidateListAPI) FetchServerList(context.Context) (api.ServerList, error) {
+	pf, offline := true, false
+	endpoints := make([]api.Endpoint, 0, a.count)
+	for index := 1; index <= a.count; index++ {
+		endpoints = append(endpoints, api.Endpoint{IP: fmt.Sprintf("192.0.2.%d", index), Hostname: fmt.Sprintf("ca-%d.example.invalid", index)})
+	}
+	return api.ServerList{
+		Groups:  map[string][]api.Group{"wg": {{Name: "wireguard"}}},
+		Regions: []api.Region{{ID: "ca", Name: "Canada", Country: "CA", PortForward: &pf, Offline: &offline, Servers: api.Servers{WG: endpoints}}},
+	}, nil
+}
+func (candidateListAPI) Probe(context.Context, api.Candidate) error {
+	return errors.New("unexpected probe outside candidate attempt")
+}
+func (candidateListAPI) Token(context.Context, string, string) (string, error) {
+	return "", errors.New("unexpected token outside candidate attempt")
+}
+func (candidateListAPI) Register(context.Context, api.Candidate, string, string) (wireguard.Registration, error) {
+	return wireguard.Registration{}, errors.New("unexpected registration outside candidate attempt")
+}
 
 func (cycleAPI) FetchServerList(context.Context) (api.ServerList, error) {
 	pf, offline := true, false
@@ -358,6 +382,90 @@ func TestNewSessionCycleRefreshesPreTunnelPublicIPAfterCleanup(t *testing.T) {
 	}
 }
 
+func TestCandidateMinimumMaximumCleanupFreshBootstrapAndOuterBackoff(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	now := time.Unix(100, 0)
+	fw := &fakeFirewall{}
+	publisher := &fakePublisher{}
+	status := health.NewStatus()
+	var attempts []string
+	var comparisonIPs []netip.Addr
+	publicIPCalls := 0
+	outerBackoffs := 0
+	var s Supervisor
+	s = Supervisor{
+		Config: config.Config{
+			CandidateMin:  3,
+			CandidateMax:  4,
+			PublicIPURL:   "https://example.invalid/ip",
+			ProbeTimeout:  time.Second,
+			ShutdownGrace: time.Second,
+		},
+		API:       candidateListAPI{count: 5},
+		Firewall:  fw,
+		Publisher: publisher,
+		Verifier:  &fakeVerifier{},
+		Process:   &countingProcess{},
+		Status:    status,
+		PublicIP: func(context.Context, string, time.Duration) (netip.Addr, error) {
+			if s.child != nil || s.current != "" || publisher.removed != len(attempts) {
+				t.Fatalf("fresh bootstrap preceded cleanup: child=%v current=%q removals=%d attempts=%d", s.child, s.current, publisher.removed, len(attempts))
+			}
+			publicIPCalls++
+			return netip.MustParseAddr(fmt.Sprintf("198.51.100.%d", publicIPCalls)), nil
+		},
+		Now: func() time.Time { return now },
+		Sleep: func(ctx context.Context, _ time.Duration) error {
+			outerBackoffs++
+			if len(attempts) != 4 {
+				t.Fatalf("outer backoff began after %d attempts", len(attempts))
+			}
+			cancel()
+			return ctx.Err()
+		},
+		cooldown: map[string]time.Time{"192.0.2.2": now.Add(time.Hour)},
+	}
+	s.attempt = func(_ context.Context, candidate api.Candidate, comparisonIP netip.Addr) error {
+		if s.child != nil || s.current != "" || publisher.removed != len(attempts) {
+			t.Fatalf("parallel or unclean candidate start for %s: child=%v current=%q removals=%d attempts=%d", candidate.IP, s.child, s.current, publisher.removed, len(attempts))
+		}
+		for _, attempted := range attempts {
+			if attempted == candidate.IP {
+				t.Fatalf("candidate %s attempted twice", candidate.IP)
+			}
+		}
+		attempts = append(attempts, candidate.IP)
+		comparisonIPs = append(comparisonIPs, comparisonIP)
+		s.child = &fakeChild{done: make(chan error)}
+		s.current = fmt.Sprintf("gen-%d", len(attempts))
+		return errors.New("deterministic candidate failure")
+	}
+	if err := s.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(attempts, ",") != "192.0.2.1,192.0.2.3,192.0.2.4,192.0.2.5" {
+		t.Fatalf("attempts=%v", attempts)
+	}
+	if len(attempts) < s.Config.CandidateMin || len(attempts) > s.Config.CandidateMax || publicIPCalls != len(attempts) {
+		t.Fatalf("attempts=%d min=%d max=%d public-IP calls=%d", len(attempts), s.Config.CandidateMin, s.Config.CandidateMax, publicIPCalls)
+	}
+	for index, comparisonIP := range comparisonIPs {
+		want := netip.MustParseAddr(fmt.Sprintf("198.51.100.%d", index+1))
+		if comparisonIP != want {
+			t.Fatalf("comparison IP %d=%s want=%s", index, comparisonIP, want)
+		}
+	}
+	if publisher.removed != len(attempts) || s.child != nil || s.current != "" || outerBackoffs != 1 {
+		t.Fatalf("removals=%d child=%v current=%q outer backoffs=%d", publisher.removed, s.child, s.current, outerBackoffs)
+	}
+	for _, endpoint := range attempts {
+		if until, found := s.cooldown[endpoint]; !found || !until.After(now) {
+			t.Fatalf("failed endpoint %s was not cooled", endpoint)
+		}
+	}
+}
+
 func TestCyclePublicationAndFirewallFailuresPropagate(t *testing.T) {
 	newSupervisor := func(fw *fakeFirewall, publisher *fakePublisher) *Supervisor {
 		return &Supervisor{
@@ -436,10 +544,11 @@ func TestFirewallInitFailureMarksSupervisorNotLive(t *testing.T) {
 }
 
 type fakeChild struct {
-	done    chan error
-	stops   int
-	stopErr error
-	events  *[]string
+	done       chan error
+	stops      int
+	stopErr    error
+	stopErrors []error
+	events     *[]string
 }
 
 func (c *fakeChild) Done() <-chan error { return c.done }
@@ -447,6 +556,11 @@ func (c *fakeChild) Stop(time.Duration) error {
 	c.stops++
 	if c.events != nil {
 		*c.events = append(*c.events, "stop-child")
+	}
+	if len(c.stopErrors) != 0 {
+		err := c.stopErrors[0]
+		c.stopErrors = c.stopErrors[1:]
+		return err
 	}
 	return c.stopErr
 }
@@ -626,23 +740,57 @@ func TestHealthRestrictionInjectedFailuresAreFailClosed(t *testing.T) {
 
 func TestFailoverAndShutdownSurfaceAllSecurityErrors(t *testing.T) {
 	for _, state := range []State{StateFailingOver, StateShuttingDown} {
-		t.Run(string(state), func(t *testing.T) {
+		t.Run(string(state)+" prerequisites", func(t *testing.T) {
 			var events []string
 			fw := &fakeFirewall{applyErrors: map[int]error{0: errors.New("lock failed")}, events: &events}
-			publisher := &fakePublisher{invalidateReadyErr: errors.New("ready failed"), invalidateCurrentErr: errors.New("current failed"), removeErr: errors.New("remove failed"), events: &events}
+			publisher := &fakePublisher{invalidateReadyErr: errors.New("ready failed"), invalidateCurrentErr: errors.New("current failed"), events: &events}
 			child := &fakeChild{done: make(chan error), stopErr: errors.New("stop failed"), events: &events}
 			s := Supervisor{Config: config.Config{ShutdownGrace: time.Second}, Firewall: fw, Publisher: publisher, Status: health.NewStatus(), child: child, current: "gen-one", pfPort: 49152}
 			err := s.deactivate(state)
-			for _, message := range []string{"lock failed", "ready failed", "current failed", "stop failed", "remove failed"} {
+			for _, message := range []string{"lock failed", "ready failed", "current failed", "stop failed"} {
 				if err == nil || !strings.Contains(err.Error(), message) {
 					t.Fatalf("missing %q in %v", message, err)
 				}
 			}
-			if strings.Join(events, ",") != "firewall:LOCKED,stop-child,invalidate-ready,invalidate-current,remove" || s.pfPort != 0 || !s.cleanupRequired {
-				t.Fatalf("events=%v port=%d cleanup=%v", events, s.pfPort, s.cleanupRequired)
+			if strings.Join(events, ",") != "firewall:LOCKED,stop-child,invalidate-ready,invalidate-current" || s.pfPort != 0 || !s.cleanupRequired || s.child == nil || publisher.removed != 0 {
+				t.Fatalf("events=%v port=%d cleanup=%v child=%v removals=%d", events, s.pfPort, s.cleanupRequired, s.child, publisher.removed)
+			}
+		})
+		t.Run(string(state)+" removal", func(t *testing.T) {
+			publisher := &fakePublisher{removeErr: errors.New("remove failed")}
+			s := Supervisor{Config: config.Config{ShutdownGrace: time.Second}, Firewall: &fakeFirewall{}, Publisher: publisher, Status: health.NewStatus(), child: &fakeChild{done: make(chan error)}, current: "gen-one"}
+			if err := s.deactivate(state); err == nil || !strings.Contains(err.Error(), "remove failed") || s.child != nil || s.current != "gen-one" || !s.cleanupRequired {
+				t.Fatalf("error=%v child=%v current=%q cleanup=%v", err, s.child, s.current, s.cleanupRequired)
 			}
 		})
 	}
+}
+
+func TestStopChildRetainsUnconfirmedProcessAndCleanupRetries(t *testing.T) {
+	t.Run("stopChild retains handle", func(t *testing.T) {
+		child := &fakeChild{done: make(chan error), stopErrors: []error{errors.New("signal failed"), nil}}
+		s := Supervisor{Config: config.Config{ShutdownGrace: time.Second}, child: child}
+		if err := s.stopChild(); err == nil || s.child != child {
+			t.Fatalf("first stop error=%v child=%v", err, s.child)
+		}
+		if err := s.stopChild(); err != nil || s.child != nil || child.stops != 2 {
+			t.Fatalf("retry error=%v child=%v stops=%d", err, s.child, child.stops)
+		}
+	})
+	t.Run("cleanupRequired retries termination", func(t *testing.T) {
+		child := &fakeChild{done: make(chan error), stopErrors: []error{errors.New("signal failed"), nil}}
+		publisher := &fakePublisher{}
+		s := Supervisor{Config: config.Config{ShutdownGrace: time.Second}, Firewall: &fakeFirewall{}, Publisher: publisher, Status: health.NewStatus(), child: child, current: "gen-one", Now: func() time.Time { return time.Unix(1, 0) }, Sleep: func(context.Context, time.Duration) error { return nil }}
+		if err := s.deactivate(StateFailingOver); err == nil || !s.cleanupRequired || s.child != child || publisher.removed != 0 {
+			t.Fatalf("first cleanup error=%v required=%v child=%v removals=%d", err, s.cleanupRequired, s.child, publisher.removed)
+		}
+		if err := s.retryCandidateCleanup(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if child.stops != 2 || s.child != nil || s.current != "" || s.cleanupRequired || publisher.removed != 1 {
+			t.Fatalf("stops=%d child=%v current=%q cleanup=%v removals=%d", child.stops, s.child, s.current, s.cleanupRequired, publisher.removed)
+		}
+	})
 }
 
 func firewallStates(states []firewall.State) []string {
@@ -709,6 +857,35 @@ func TestOSProcessStopCompletionAndSignals(t *testing.T) {
 			t.Fatalf("stop error=%v signals=%d", err, signals)
 		}
 	})
+	t.Run("natural nonzero exit is gone after Done consumption", func(t *testing.T) {
+		child := start("exit 7\n")
+		if err := <-child.Done(); err == nil {
+			t.Fatal("natural child failure was not reported")
+		}
+		signals := 0
+		child.signalFn = func(syscall.Signal) error { signals++; return errors.New("post-reap signal") }
+		if err := child.Stop(time.Second); err != nil || signals != 0 {
+			t.Fatalf("stop error=%v signals=%d", err, signals)
+		}
+	})
+	t.Run("transient SIGTERM failure is retryable", func(t *testing.T) {
+		child := start("trap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n")
+		time.Sleep(25 * time.Millisecond)
+		original := child.signalFn
+		child.signalFn = func(syscall.Signal) error { return errors.New("transient SIGTERM failure") }
+		if err := child.Stop(time.Second); err == nil {
+			t.Fatal("transient SIGTERM failure was cached as success")
+		}
+		select {
+		case <-child.waitDone:
+			t.Fatal("child exited despite failed SIGTERM delivery")
+		default:
+		}
+		child.signalFn = original
+		if err := child.Stop(time.Second); err != nil {
+			t.Fatalf("retry stop: %v", err)
+		}
+	})
 	t.Run("repeated Stop sends one graceful signal", func(t *testing.T) {
 		child := start("trap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n")
 		time.Sleep(25 * time.Millisecond)
@@ -741,6 +918,31 @@ func TestOSProcessStopCompletionAndSignals(t *testing.T) {
 		}
 		if err != nil {
 			t.Fatalf("expected SIGKILL fallback returned %v", err)
+		}
+	})
+	t.Run("transient SIGKILL failure is retryable", func(t *testing.T) {
+		child := start("trap '' TERM INT\nwhile :; do sleep 1; done\n")
+		time.Sleep(25 * time.Millisecond)
+		original := child.signalFn
+		killAttempts := 0
+		child.signalFn = func(signal syscall.Signal) error {
+			if signal == syscall.SIGKILL {
+				killAttempts++
+				return errors.New("transient SIGKILL failure")
+			}
+			return nil
+		}
+		if err := child.Stop(20 * time.Millisecond); err == nil || killAttempts != 1 {
+			t.Fatalf("first stop error=%v kill attempts=%d", err, killAttempts)
+		}
+		select {
+		case <-child.waitDone:
+			t.Fatal("child exited despite failed SIGKILL delivery")
+		default:
+		}
+		child.signalFn = original
+		if err := child.Stop(20 * time.Millisecond); err != nil {
+			t.Fatalf("retry stop: %v", err)
 		}
 	})
 }

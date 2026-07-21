@@ -37,11 +37,16 @@ type Publisher struct {
 	ReaderGID   int
 	PFHelperUID int
 	Owner       Ownership
+	before      func(string, string) error
+	sync        func(string) error
 }
 
-func (p Publisher) PublishCurrent(g Generation) (string, error) {
+func (p Publisher) PublishCurrent(g Generation) (publishedDir string, resultErr error) {
 	if err := g.Validate(); err != nil {
 		return "", err
+	}
+	if !validID(g.ID) {
+		return "", errors.New("invalid generation ID")
 	}
 	if p.ReaderGID == 0 {
 		p.ReaderGID = ReaderID
@@ -52,10 +57,32 @@ func (p Publisher) PublishCurrent(g Generation) (string, error) {
 	if p.Owner == nil {
 		p.Owner = OSOwnership{}
 	}
-	if err := p.ensureDirectories(g.ID); err != nil {
+	if err := p.ensureBaseDirectories(); err != nil {
 		return "", err
 	}
 	dir := filepath.Join(p.Root, "sessions", g.ID)
+	if _, err := os.Lstat(dir); err == nil {
+		return "", errors.New("generation already exists")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			removeErr := os.RemoveAll(dir)
+			syncErr := p.syncDir(filepath.Join(p.Root, "sessions"))
+			if removeErr != nil {
+				removeErr = fmt.Errorf("remove partial generation: %w", removeErr)
+			}
+			if syncErr != nil {
+				syncErr = fmt.Errorf("sync generation cleanup: %w", syncErr)
+			}
+			resultErr = errors.Join(resultErr, removeErr, syncErr)
+		}
+	}()
+	if err := p.createGenerationDirectories(dir); err != nil {
+		return "", err
+	}
 	files := []struct {
 		name, value string
 		mode        os.FileMode
@@ -76,12 +103,16 @@ func (p Publisher) PublishCurrent(g Generation) (string, error) {
 			return "", err
 		}
 	}
-	if err := syncDir(dir); err != nil {
+	if err := p.checkpoint("generation-sync", dir); err != nil {
+		return "", err
+	}
+	if err := p.syncDir(dir); err != nil {
 		return "", err
 	}
 	if err := p.atomicLink("current", filepath.Join("sessions", g.ID)); err != nil {
 		return "", err
 	}
+	committed = true
 	return dir, nil
 }
 
@@ -152,20 +183,20 @@ func (p Publisher) invalidateLink(name string) error {
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return syncDir(p.Root)
+	return p.syncDir(p.Root)
 }
 
 func (p Publisher) Remove(id string) error {
 	if !validID(id) {
 		return errors.New("invalid generation ID")
 	}
-	return os.RemoveAll(filepath.Join(p.Root, "sessions", id))
+	if err := os.RemoveAll(filepath.Join(p.Root, "sessions", id)); err != nil {
+		return err
+	}
+	return p.syncDir(filepath.Join(p.Root, "sessions"))
 }
 
-func (p Publisher) ensureDirectories(id string) error {
-	if !validID(id) {
-		return errors.New("invalid generation ID")
-	}
+func (p Publisher) ensureBaseDirectories() error {
 	dirs := []struct {
 		path     string
 		mode     os.FileMode
@@ -173,8 +204,6 @@ func (p Publisher) ensureDirectories(id string) error {
 	}{
 		{p.Root, 0o750, 0, p.ReaderGID},
 		{filepath.Join(p.Root, "sessions"), 0o710, 0, p.ReaderGID},
-		{filepath.Join(p.Root, "sessions", id), 0o710, 0, p.ReaderGID},
-		{filepath.Join(p.Root, "sessions", id, "pf"), 0o730, p.PFHelperUID, p.ReaderGID},
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir.path, dir.mode); err != nil {
@@ -190,6 +219,32 @@ func (p Publisher) ensureDirectories(id string) error {
 	return nil
 }
 
+func (p Publisher) createGenerationDirectories(dir string) error {
+	if err := os.Mkdir(dir, 0o710); err != nil {
+		return err
+	}
+	if err := p.checkpoint("generation-directory", dir); err != nil {
+		return err
+	}
+	if err := os.Chmod(dir, 0o710); err != nil {
+		return err
+	}
+	if err := p.Owner.Chown(dir, 0, p.ReaderGID); err != nil {
+		return err
+	}
+	pfDir := filepath.Join(dir, "pf")
+	if err := os.Mkdir(pfDir, 0o730); err != nil {
+		return err
+	}
+	if err := p.checkpoint("pf-directory", pfDir); err != nil {
+		return err
+	}
+	if err := os.Chmod(pfDir, 0o730); err != nil {
+		return err
+	}
+	return p.Owner.Chown(pfDir, p.PFHelperUID, p.ReaderGID)
+}
+
 func (p Publisher) atomicFile(dir, name string, data []byte, mode os.FileMode, uid, gid int) error {
 	tmp, err := os.CreateTemp(dir, "."+name+".tmp-")
 	if err != nil {
@@ -197,6 +252,10 @@ func (p Publisher) atomicFile(dir, name string, data []byte, mode os.FileMode, u
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
+	if err := p.checkpoint("file:"+name, tmpName); err != nil {
+		tmp.Close()
+		return err
+	}
 	if err := tmp.Chmod(mode); err != nil {
 		tmp.Close()
 		return err
@@ -219,20 +278,68 @@ func (p Publisher) atomicFile(dir, name string, data []byte, mode os.FileMode, u
 	if err := os.Rename(tmpName, filepath.Join(dir, name)); err != nil {
 		return err
 	}
-	return syncDir(dir)
+	return p.syncDir(dir)
 }
 
 func (p Publisher) atomicLink(name, target string) error {
+	path := filepath.Join(p.Root, name)
+	oldTarget, err := os.Readlink(path)
+	hadOld := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	tmp := filepath.Join(p.Root, "."+name+".tmp-"+strconv.Itoa(os.Getpid()))
 	_ = os.Remove(tmp)
 	if err := os.Symlink(target, tmp); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, filepath.Join(p.Root, name)); err != nil {
-		_ = os.Remove(tmp)
+	defer os.Remove(tmp)
+	if err := p.checkpoint("link:"+name, tmp); err != nil {
 		return err
 	}
-	return syncDir(p.Root)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	if err := p.checkpoint("link-sync:"+name, path); err != nil {
+		return errors.Join(err, p.rollbackLink(path, oldTarget, hadOld))
+	}
+	if err := p.syncDir(p.Root); err != nil {
+		return errors.Join(err, p.rollbackLink(path, oldTarget, hadOld))
+	}
+	return nil
+}
+
+func (p Publisher) rollbackLink(path, oldTarget string, hadOld bool) error {
+	if !hadOld {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return p.syncDir(p.Root)
+	}
+	tmp := path + ".rollback-" + strconv.Itoa(os.Getpid())
+	_ = os.Remove(tmp)
+	if err := os.Symlink(oldTarget, tmp); err != nil {
+		return err
+	}
+	defer os.Remove(tmp)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	return p.syncDir(p.Root)
+}
+
+func (p Publisher) checkpoint(step, path string) error {
+	if p.before == nil {
+		return nil
+	}
+	return p.before(step, path)
+}
+
+func (p Publisher) syncDir(path string) error {
+	if p.sync != nil {
+		return p.sync(path)
+	}
+	return syncDir(path)
 }
 
 func (g Generation) Validate() error {

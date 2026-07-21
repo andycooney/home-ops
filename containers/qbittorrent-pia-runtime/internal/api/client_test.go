@@ -50,6 +50,21 @@ func TestCandidateFilteringOrderingCooldownAndBound(t *testing.T) {
 	}
 }
 
+func TestCandidateSelectionDeduplicatesEndpointIPs(t *testing.T) {
+	pf, offline := true, false
+	list := ServerList{
+		Groups: map[string][]Group{"wg": {{Name: "wireguard"}}},
+		Regions: []Region{
+			{ID: "ca_one", Name: "Canada One", Country: "CA", PortForward: &pf, Offline: &offline, Servers: Servers{WG: []Endpoint{{IP: "192.0.2.1", Hostname: "one.example.invalid"}}}},
+			{ID: "ca_two", Name: "Canada Two", Country: "CA", PortForward: &pf, Offline: &offline, Servers: Servers{WG: []Endpoint{{IP: "192.0.2.1", Hostname: "duplicate.example.invalid"}, {IP: "192.0.2.2", Hostname: "two.example.invalid"}}}},
+		},
+	}
+	candidates := SelectCandidates(list, nil, nil, time.Unix(1, 0), 6)
+	if len(candidates) != 2 || candidates[0].IP == candidates[1].IP {
+		t.Fatalf("candidates=%#v", candidates)
+	}
+}
+
 func TestMalformedAndIncompleteServerLists(t *testing.T) {
 	for _, value := range []string{"{", `{"regions":[]}`, `{"groups":{"wg":[{}]},"regions":[{"id":"x"}]}`} {
 		if _, err := ParseServerList(strings.NewReader(value)); err == nil {

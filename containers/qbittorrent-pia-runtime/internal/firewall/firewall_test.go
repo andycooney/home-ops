@@ -14,6 +14,9 @@ func testConfig() Config {
 
 func TestCompleteTransactionsAndNoUIDDefaultAllowance(t *testing.T) {
 	endpoint := Endpoint{IP: netip.MustParseAddr("192.0.2.10"), Port: 1337, PFGateway: netip.MustParseAddr("192.0.2.20")}
+	appAllow := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 1000 -o tun0 -j ACCEPT"
+	appDrop := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 1000 -j DROP"
+	established := "-A PIA_RUNTIME_OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
 	for _, state := range []State{Bootstrap, Selected, Verifying, Healthy, Locked} {
 		for _, ipv6 := range []bool{false, true} {
 			tx, err := Transaction(testConfig(), state, endpointFor(state, endpoint), ipv6)
@@ -30,15 +33,61 @@ func TestCompleteTransactionsAndNoUIDDefaultAllowance(t *testing.T) {
 					t.Fatalf("transient/default UID allowance in %s: %s", state, line)
 				}
 			}
-			if !strings.Contains(tx, "--uid-owner 1000 ! -o tun0 -j DROP") {
-				t.Fatalf("%s lacks explicit UID default-interface block", state)
+			if !strings.Contains(tx, appDrop) {
+				t.Fatalf("%s lacks unconditional application UID block", state)
 			}
-			if strings.Index(tx, "--uid-owner 1000 ! -o tun0 -j DROP") > strings.Index(tx, "-A PIA_RUNTIME_OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT") {
+			if strings.Index(tx, appDrop) > strings.Index(tx, established) {
 				t.Fatalf("%s evaluates established output before UID block", state)
 			}
-			if state != Healthy && strings.Contains(tx, "--uid-owner 1000 -o tun0 -j ACCEPT") {
-				t.Fatalf("%s permits application tunnel traffic", state)
+			if state == Healthy {
+				if allowIndex, dropIndex := strings.Index(tx, appAllow), strings.Index(tx, appDrop); allowIndex < 0 || allowIndex > dropIndex {
+					t.Fatalf("%s does not allow new and established application tunnel traffic before the UID drop", state)
+				}
+			} else if strings.Contains(tx, appAllow) {
+				t.Fatalf("%s permits new or established application tunnel traffic", state)
 			}
+			for _, laterAllowance := range []string{"-A PIA_RUNTIME_OUTPUT -d 10.42.0.0/16 -j ACCEPT", "-A PIA_RUNTIME_OUTPUT -p udp -d 192.0.2.10 --dport 1337 -j ACCEPT"} {
+				if index := strings.Index(tx, laterAllowance); index >= 0 && strings.Index(tx, appDrop) > index {
+					t.Fatalf("%s evaluates %q before the application UID drop", state, laterAllowance)
+				}
+			}
+		}
+	}
+}
+
+func TestApplicationUIDTunnelAndEstablishedTrafficIsHealthyOnly(t *testing.T) {
+	endpoint := Endpoint{IP: netip.MustParseAddr("192.0.2.10"), Port: 1337, PFGateway: netip.MustParseAddr("192.0.2.20")}
+	reply := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 1000 ! -o tun0 -p tcp --sport 8080 -d 10.42.0.0/16 -m conntrack --ctstate ESTABLISHED -j ACCEPT"
+	tunnel := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 1000 -o tun0 -j ACCEPT"
+	appDrop := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 1000 -j DROP"
+	pfDrop := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 65532 -j DROP"
+	established := "-A PIA_RUNTIME_OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+	internal := "-A PIA_RUNTIME_OUTPUT -d 10.42.0.0/16 -j ACCEPT"
+	for _, state := range []State{Bootstrap, Selected, Verifying, Healthy, Locked} {
+		tx, err := Transaction(testConfig(), state, endpointFor(state, endpoint), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		replyIndex, dropIndex := strings.Index(tx, reply), strings.Index(tx, appDrop)
+		pfDropIndex, establishedIndex := strings.Index(tx, pfDrop), strings.Index(tx, established)
+		if replyIndex < 0 || !(replyIndex < dropIndex && dropIndex < pfDropIndex && pfDropIndex < establishedIndex) {
+			t.Fatalf("%s identity/established ordering is unsafe", state)
+		}
+		if internalIndex := strings.Index(tx, internal); internalIndex < 0 || dropIndex > internalIndex {
+			t.Fatalf("%s permits UID 1000 arbitrary internal traffic", state)
+		}
+		for _, protocol := range []string{"tcp", "udp"} {
+			wan := "-A PIA_RUNTIME_OUTPUT -p " + protocol + " -d 192.0.2.10 --dport 1337 -j ACCEPT"
+			if wanIndex := strings.Index(tx, wan); wanIndex >= 0 && dropIndex > wanIndex {
+				t.Fatalf("%s permits UID 1000 through the direct endpoint exception", state)
+			}
+		}
+		if state == Healthy {
+			if tunnelIndex := strings.Index(tx, tunnel); !(replyIndex < tunnelIndex && tunnelIndex < dropIndex) {
+				t.Fatalf("%s does not allow new and established tun0 traffic before the UID-wide drop", state)
+			}
+		} else if strings.Contains(tx, tunnel) {
+			t.Fatalf("%s allows new or established UID 1000 tun0 traffic", state)
 		}
 	}
 }
@@ -62,11 +111,15 @@ func TestUIDServiceRepliesAreNarrowFamilyMatchedAndOrdered(t *testing.T) {
 					t.Fatal(err)
 				}
 				reply := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 1000 ! -o tun0 -p tcp --sport 8080 -d " + tc.allowed + " -m conntrack --ctstate ESTABLISHED -j ACCEPT"
-				drop := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 1000 ! -o tun0 -j DROP"
+				drop := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 1000 -j DROP"
+				tunnel := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 1000 -o tun0 -j ACCEPT"
 				established := "-A PIA_RUNTIME_OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
 				replyIndex, dropIndex, establishedIndex := strings.Index(tx, reply), strings.Index(tx, drop), strings.Index(tx, established)
 				if replyIndex < 0 || !(replyIndex < dropIndex && dropIndex < establishedIndex) {
 					t.Fatalf("%s %s service reply/drop/established ordering is unsafe", state, tc.name)
+				}
+				if state == Healthy && !(replyIndex < strings.Index(tx, tunnel) && strings.Index(tx, tunnel) < dropIndex) {
+					t.Fatalf("%s %s service reply/tunnel/drop ordering is unsafe", state, tc.name)
 				}
 				if strings.Contains(tx, "--uid-owner 1000") && strings.Contains(tx, "-d "+tc.other+" -m conntrack --ctstate ESTABLISHED -j ACCEPT") {
 					t.Fatalf("%s %s contains cross-family service reply rule", state, tc.name)

@@ -124,7 +124,10 @@ func Transaction(cfg Config, state State, endpoint Endpoint, ipv6 bool) (string,
 		}
 		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d ! -o %s -p tcp --sport %d -d %s -m conntrack --ctstate ESTABLISHED -j ACCEPT\n", cfg.ApplicationUID, cfg.Interface, cfg.ServicePort, subnet)
 	}
-	fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d ! -o %s -j DROP\n", cfg.ApplicationUID, cfg.Interface)
+	if state == Healthy {
+		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d -o %s -j ACCEPT\n", cfg.ApplicationUID, cfg.Interface)
+	}
+	fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d -j DROP\n", cfg.ApplicationUID)
 	if state == Healthy && endpoint.PFGateway.Is6() == ipv6 {
 		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d -o %s -p tcp -d %s --dport %d -j ACCEPT\n", cfg.PFHelperUID, cfg.Interface, endpoint.PFGateway, PFAPIPort)
 	}
@@ -153,7 +156,6 @@ func Transaction(cfg Config, state State, endpoint Endpoint, ipv6 bool) (string,
 		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -o %s -j ACCEPT\n", cfg.Interface)
 	}
 	if state == Healthy {
-		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d -o %s -j ACCEPT\n", cfg.ApplicationUID, cfg.Interface)
 		if endpoint.ForwardedPort != 0 && endpoint.PFGateway.Is6() == ipv6 {
 			fmt.Fprintf(&b, "-A PIA_RUNTIME_INPUT -i %s -p tcp --dport %d -m conntrack --ctstate NEW -j ACCEPT\n", cfg.Interface, endpoint.ForwardedPort)
 			fmt.Fprintf(&b, "-A PIA_RUNTIME_INPUT -i %s -p udp --dport %d -m conntrack --ctstate NEW -j ACCEPT\n", cfg.Interface, endpoint.ForwardedPort)

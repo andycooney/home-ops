@@ -27,7 +27,7 @@ Useful non-secret settings:
 | `PIA_PREFERRED_REGIONS` | empty | Ordered comma-separated PIA region IDs |
 | `PIA_ALLOWED_SUBNETS` | empty | Explicit non-WAN CIDRs required by the pod contract |
 | `PIA_PF_HELPER_UID` | `65532` | Unprivileged PF helper identity |
-| `PIA_CANDIDATE_MIN` / `PIA_CANDIDATE_MAX` | `3` / `6` | Validated candidate-cycle bounds |
+| `PIA_CANDIDATE_MIN` / `PIA_CANDIDATE_MAX` | `3` / `6` | Minimum distinct attempts before outer backoff and maximum attempts per batch |
 | `PIA_TUNNEL_TIMEOUT` | `120s` | Maximum startup verification window |
 | `PIA_HEALTH_INTERVAL` | `15s` | Independent health interval |
 | `PIA_HEALTH_FAILURES` | `4` | Consecutive failures before rotation |
@@ -38,6 +38,8 @@ Useful non-secret settings:
 All durations and bounds are validated. Public or default-route CIDRs such as `0.0.0.0/0` are rejected as allowed subnets.
 
 The helper atomically publishes `{"generation":"<active-generation>","port":<1..65535>}` to the active generation's `pf/port` file with mode `0600`. The supervisor rejects stale, malformed, unknown-field, wrong-mode, and out-of-range data. Only the supervisor converts an accepted record into firewall rules; helper-provided commands are never executed.
+
+UID `1000` receives a `tun0` allowance only in HEALTHY, followed immediately by an unconditional UID-wide drop before generic conntrack or subnet rules. Failed candidate sessions are locked, stopped, invalidated, and removed before the supervisor obtains a fresh comparison IP and attempts the next distinct candidate. A stop whose termination cannot be confirmed retains the child and generation for a later cleanup retry. Failed generation publication removes the new partial directory and restores any older `current` link.
 
 ## Development
 

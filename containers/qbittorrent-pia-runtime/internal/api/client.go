@@ -144,6 +144,16 @@ func SelectCandidates(list ServerList, preferred []string, cooldown map[string]t
 		}
 		return candidates[i].IP < candidates[j].IP
 	})
+	seenEndpoints := make(map[string]struct{}, len(candidates))
+	distinct := candidates[:0]
+	for _, candidate := range candidates {
+		if _, seen := seenEndpoints[candidate.IP]; seen {
+			continue
+		}
+		seenEndpoints[candidate.IP] = struct{}{}
+		distinct = append(distinct, candidate)
+	}
+	candidates = distinct
 	if max > 0 && len(candidates) > max {
 		candidates = candidates[:max]
 	}

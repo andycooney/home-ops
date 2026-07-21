@@ -10,14 +10,18 @@ import (
 )
 
 type fakeOwner struct {
-	mu    sync.Mutex
-	calls map[string][2]int
+	mu       sync.Mutex
+	calls    map[string][2]int
+	failPath string
 }
 
 func (f *fakeOwner) Chown(path string, uid, gid int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls[path] = [2]int{uid, gid}
+	if path == f.failPath {
+		return errors.New("injected ownership failure")
+	}
 	return nil
 }
 
@@ -178,6 +182,108 @@ func TestAtomicReplacementAndStaleRemoval(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "sessions", "gen-one")); !os.IsNotExist(err) {
 		t.Fatal("stale generation remains")
+	}
+}
+
+func TestPublishCurrentCleansEveryPartialGenerationFailure(t *testing.T) {
+	steps := []string{
+		"generation-directory",
+		"pf-directory",
+		"file:generation",
+		"file:pia.token",
+		"file:wg0.conf",
+		"file:payload",
+		"file:port",
+		"generation-sync",
+		"link:current",
+		"link-sync:current",
+	}
+	for _, step := range steps {
+		t.Run(step, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "pia")
+			owner := &fakeOwner{calls: map[string][2]int{}}
+			publisher := Publisher{Root: root, ReaderGID: ReaderID, Owner: owner}
+			if _, err := publisher.PublishCurrent(generation("gen-old")); err != nil {
+				t.Fatal(err)
+			}
+			unrelated := filepath.Join(root, "sessions", "unrelated")
+			if err := os.Mkdir(unrelated, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			failing := publisher
+			failing.before = func(got, _ string) error {
+				if got == step {
+					return errors.New("injected " + step + " failure")
+				}
+				return nil
+			}
+			if _, err := failing.PublishCurrent(generation("gen-new")); err == nil {
+				t.Fatal("publication unexpectedly succeeded")
+			}
+			assertFailedGenerationClean(t, root)
+		})
+	}
+
+	t.Run("directory ownership", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "pia")
+		owner := &fakeOwner{calls: map[string][2]int{}}
+		publisher := Publisher{Root: root, ReaderGID: ReaderID, Owner: owner}
+		if _, err := publisher.PublishCurrent(generation("gen-old")); err != nil {
+			t.Fatal(err)
+		}
+		unrelated := filepath.Join(root, "sessions", "unrelated")
+		if err := os.Mkdir(unrelated, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		owner.failPath = filepath.Join(root, "sessions", "gen-new")
+		if _, err := publisher.PublishCurrent(generation("gen-new")); err == nil {
+			t.Fatal("ownership failure was ignored")
+		}
+		assertFailedGenerationClean(t, root)
+	})
+}
+
+func assertFailedGenerationClean(t *testing.T, root string) {
+	t.Helper()
+	if target, err := os.Readlink(filepath.Join(root, "current")); err != nil || target != "sessions/gen-old" {
+		t.Fatalf("current=%q error=%v", target, err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "sessions", "gen-new")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("partial generation remains: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "sessions", "unrelated")); err != nil {
+		t.Fatalf("unrelated directory was removed: %v", err)
+	}
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if strings.Contains(entry.Name(), ".tmp-") || strings.Contains(entry.Name(), ".rollback-") {
+			t.Fatalf("temporary publication artifact remains: %s", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPublishCurrentRejectsExistingGenerationWithoutRemovingIt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "pia")
+	publisher := Publisher{Root: root, ReaderGID: ReaderID, Owner: &fakeOwner{calls: map[string][2]int{}}}
+	if _, err := publisher.PublishCurrent(generation("gen-one")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publisher.PublishCurrent(generation("gen-one")); err == nil {
+		t.Fatal("existing generation was overwritten")
+	}
+	if target, err := os.Readlink(filepath.Join(root, "current")); err != nil || target != "sessions/gen-one" {
+		t.Fatalf("current=%q error=%v", target, err)
+	}
+	for _, name := range []string{"pia.token", "wg0.conf", "pf/payload"} {
+		if _, err := os.Stat(filepath.Join(root, "sessions", "gen-one", name)); err != nil {
+			t.Fatalf("active generation file %s was removed: %v", name, err)
+		}
 	}
 }
 

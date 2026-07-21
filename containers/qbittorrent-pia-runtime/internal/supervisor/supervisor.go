@@ -61,6 +61,8 @@ type TunnelVerifier interface {
 }
 type Child interface {
 	Done() <-chan error
+	// Stop returns nil only after the child has been reaped. A non-nil result
+	// leaves termination unconfirmed and must remain retryable.
 	Stop(time.Duration) error
 }
 type Process interface {
@@ -86,6 +88,7 @@ type Supervisor struct {
 	pfPort          uint16
 	cleanupRequired bool
 	cycle           func(context.Context, netip.Addr) error
+	attempt         func(context.Context, api.Candidate, netip.Addr) error
 }
 
 func (s *Supervisor) Run(ctx context.Context) error {
@@ -187,79 +190,115 @@ func (s *Supervisor) runCycle(ctx context.Context, preTunnelIP netip.Addr) error
 	if len(candidates) == 0 {
 		return errors.New("no eligible candidates")
 	}
+	requiredAttempts := min(s.Config.CandidateMin, len(candidates))
 	var lastErr error
-	for _, candidate := range candidates {
+	attempts := 0
+	comparisonIP := preTunnelIP
+	for index, candidate := range candidates {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if err := s.Firewall.Apply(ctx, firewall.Bootstrap, firewall.Endpoint{}); err != nil {
+		attempts++
+		s.log("candidate attempt=%d required-minimum=%d maximum=%d", attempts, requiredAttempts, len(candidates))
+		attempt := s.attemptCandidate
+		if s.attempt != nil {
+			attempt = s.attempt
+		}
+		err := attempt(ctx, candidate, comparisonIP)
+		if err == nil {
+			return nil
+		}
+		if api.IsAuthentication(err) {
 			return err
 		}
-		token, err := s.API.Token(ctx, s.Config.Username, s.Config.Password)
-		if err != nil {
-			if api.IsAuthentication(err) {
-				return err
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		lastErr = err
+		s.cool(candidate)
+		if cleanupErr := s.retryCandidateCleanup(ctx); cleanupErr != nil {
+			return errors.Join(err, cleanupErr)
+		}
+		if index+1 < len(candidates) {
+			freshIP, bootstrapErr := s.bootstrapPublicIP(ctx)
+			if bootstrapErr != nil {
+				return errors.Join(err, bootstrapErr)
 			}
-			lastErr = err
-			s.cool(candidate)
-			continue
+			comparisonIP = freshIP
 		}
-		keys, err := wireguard.GenerateKeyPair()
-		if err != nil {
-			return err
-		}
-		registrationEndpoint := firewall.Endpoint{IP: netip.MustParseAddr(candidate.IP), Port: candidate.Port}
-		if err := s.Firewall.Apply(ctx, firewall.Selected, registrationEndpoint); err != nil {
-			return err
-		}
-		if err := s.API.Probe(ctx, candidate); err != nil {
-			lastErr = err
-			s.cool(candidate)
-			continue
-		}
-		s.transition(StateRegistering, false)
-		registration, err := s.API.Register(ctx, candidate, token, keys.Public)
-		if err != nil {
-			if api.IsAuthentication(err) {
-				return err
-			}
-			lastErr = err
-			s.cool(candidate)
-			continue
-		}
-		wgConfig, err := wireguard.BuildConfig(keys, candidate.IP, registration)
-		if err != nil {
-			lastErr = err
-			s.cool(candidate)
-			continue
-		}
-		generationID, err := newGenerationID(s.Now())
-		if err != nil {
-			return err
-		}
-		tunnelIP := netip.MustParseAddr(candidate.IP)
-		pfGateway := netip.MustParseAddr(registration.ServerIP)
-		generation := session.Generation{ID: generationID, Region: candidate.RegionID, Endpoint: netip.AddrPortFrom(tunnelIP, registration.ServerPort).String(), TLSHostname: candidate.Hostname, WGGateway: registration.ServerIP, PFGateway: registration.ServerIP, Token: token, WGConfig: wgConfig}
-		dir, err := s.Publisher.PublishCurrent(generation)
-		if err != nil {
-			return err
-		}
-		s.current = generationID
-		tunnelEndpoint := firewall.Endpoint{IP: tunnelIP, Port: registration.ServerPort, PFGateway: pfGateway}
-		if err := s.startAndVerify(ctx, dir, registration.DNSServers[0], tunnelEndpoint, preTunnelIP); err != nil {
-			s.cool(candidate)
-			return err
-		}
-		if err := s.monitorHealthy(ctx, candidate, tunnelEndpoint, preTunnelIP); err != nil {
-			s.cool(candidate)
-			return err
-		}
-		return nil
 	}
 	if lastErr == nil {
 		lastErr = errors.New("candidate attempts exhausted")
 	}
-	return lastErr
+	if attempts < requiredAttempts {
+		return fmt.Errorf("candidate minimum not reached: attempted %d of %d: %w", attempts, requiredAttempts, lastErr)
+	}
+	return fmt.Errorf("candidate attempts exhausted after %d attempts (minimum %d): %w", attempts, requiredAttempts, lastErr)
+}
+
+func (s *Supervisor) retryCandidateCleanup(ctx context.Context) error {
+	backoff := 30 * time.Second
+	for ctx.Err() == nil {
+		if err := s.failover(); err != nil {
+			s.transition(StateBackoff, false)
+			delay := jitter(backoff, s.Now())
+			s.log("candidate cleanup failed; retrying in %s", delay)
+			if sleepErr := s.Sleep(ctx, delay); sleepErr != nil {
+				return errors.Join(err, sleepErr)
+			}
+			backoff = nextBackoff(backoff)
+			continue
+		}
+		return nil
+	}
+	return ctx.Err()
+}
+
+func (s *Supervisor) attemptCandidate(ctx context.Context, candidate api.Candidate, preTunnelIP netip.Addr) error {
+	if err := s.Firewall.Apply(ctx, firewall.Bootstrap, firewall.Endpoint{}); err != nil {
+		return err
+	}
+	token, err := s.API.Token(ctx, s.Config.Username, s.Config.Password)
+	if err != nil {
+		return err
+	}
+	keys, err := wireguard.GenerateKeyPair()
+	if err != nil {
+		return err
+	}
+	registrationEndpoint := firewall.Endpoint{IP: netip.MustParseAddr(candidate.IP), Port: candidate.Port}
+	if err := s.Firewall.Apply(ctx, firewall.Selected, registrationEndpoint); err != nil {
+		return err
+	}
+	if err := s.API.Probe(ctx, candidate); err != nil {
+		return err
+	}
+	s.transition(StateRegistering, false)
+	registration, err := s.API.Register(ctx, candidate, token, keys.Public)
+	if err != nil {
+		return err
+	}
+	wgConfig, err := wireguard.BuildConfig(keys, candidate.IP, registration)
+	if err != nil {
+		return err
+	}
+	generationID, err := newGenerationID(s.Now())
+	if err != nil {
+		return err
+	}
+	tunnelIP := netip.MustParseAddr(candidate.IP)
+	pfGateway := netip.MustParseAddr(registration.ServerIP)
+	generation := session.Generation{ID: generationID, Region: candidate.RegionID, Endpoint: netip.AddrPortFrom(tunnelIP, registration.ServerPort).String(), TLSHostname: candidate.Hostname, WGGateway: registration.ServerIP, PFGateway: registration.ServerIP, Token: token, WGConfig: wgConfig}
+	dir, err := s.Publisher.PublishCurrent(generation)
+	if err != nil {
+		return err
+	}
+	s.current = generationID
+	tunnelEndpoint := firewall.Endpoint{IP: tunnelIP, Port: registration.ServerPort, PFGateway: pfGateway}
+	if err := s.startAndVerify(ctx, dir, registration.DNSServers[0], tunnelEndpoint, preTunnelIP); err != nil {
+		return err
+	}
+	return s.monitorHealthy(ctx, candidate, tunnelEndpoint, preTunnelIP)
 }
 
 func (s *Supervisor) startAndVerify(ctx context.Context, dir, dns string, endpoint firewall.Endpoint, preTunnelIP netip.Addr) error {
@@ -422,9 +461,11 @@ func (s *Supervisor) stopChild() error {
 	if s.child == nil {
 		return nil
 	}
-	child := s.child
+	if err := s.child.Stop(s.Config.ShutdownGrace); err != nil {
+		return err
+	}
 	s.child = nil
-	return child.Stop(s.Config.ShutdownGrace)
+	return nil
 }
 
 func (s *Supervisor) failover() error {
@@ -450,7 +491,7 @@ func (s *Supervisor) deactivate(state State) error {
 		stopErr = s.stopChild()
 	}
 	var removeErr error
-	if s.current != "" {
+	if s.current != "" && stopErr == nil && readyErr == nil && currentErr == nil {
 		removeErr = s.Publisher.Remove(s.current)
 		if removeErr == nil {
 			s.current = ""
@@ -549,14 +590,11 @@ func ChildEnvironment(source []string, wgConfigPath string) []string {
 
 type OSProcess struct{}
 type osChild struct {
-	cmd        *exec.Cmd
-	done       chan error
-	waitDone   chan struct{}
-	mu         sync.Mutex
-	result     error
-	stopOnce   sync.Once
-	stopResult error
-	signalFn   func(syscall.Signal) error
+	cmd      *exec.Cmd
+	done     chan error
+	waitDone chan struct{}
+	stopMu   sync.Mutex
+	signalFn func(syscall.Signal) error
 }
 
 func (OSProcess) Start(path string, env []string) (Child, error) {
@@ -573,9 +611,6 @@ func (OSProcess) Start(path string, env []string) (Child, error) {
 	child.signalFn = child.signal
 	go func() {
 		result := cmd.Wait()
-		child.mu.Lock()
-		child.result = result
-		child.mu.Unlock()
 		close(child.waitDone)
 		child.done <- result
 		close(child.done)
@@ -584,23 +619,22 @@ func (OSProcess) Start(path string, env []string) (Child, error) {
 }
 func (c *osChild) Done() <-chan error { return c.done }
 func (c *osChild) Stop(grace time.Duration) error {
-	c.stopOnce.Do(func() {
-		c.stopResult = c.stop(grace)
-	})
-	return c.stopResult
+	c.stopMu.Lock()
+	defer c.stopMu.Unlock()
+	return c.stop(grace)
 }
 func (c *osChild) stop(grace time.Duration) error {
 	select {
 	case <-c.waitDone:
 		reapOrphans(500 * time.Millisecond)
-		return c.waitResult()
+		return nil
 	default:
 	}
 	if err := c.signalFn(syscall.SIGTERM); err != nil {
 		select {
 		case <-c.waitDone:
 			reapOrphans(500 * time.Millisecond)
-			return c.waitResult()
+			return nil
 		default:
 			return err
 		}
@@ -609,35 +643,28 @@ func (c *osChild) stop(grace time.Duration) error {
 	defer timer.Stop()
 	select {
 	case <-c.waitDone:
-		result := c.waitResult()
-		if status, ok := c.cmd.ProcessState.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == syscall.SIGTERM {
-			result = nil
-		}
 		reapOrphans(500 * time.Millisecond)
-		return result
+		return nil
 	case <-timer.C:
 	}
 	select {
 	case <-c.waitDone:
 		reapOrphans(500 * time.Millisecond)
-		return c.waitResult()
+		return nil
 	default:
 	}
 	if err := c.signalFn(syscall.SIGKILL); err != nil {
-		return err
+		select {
+		case <-c.waitDone:
+			reapOrphans(500 * time.Millisecond)
+			return nil
+		default:
+			return err
+		}
 	}
 	<-c.waitDone
 	reapOrphans(500 * time.Millisecond)
-	result := c.waitResult()
-	if status, ok := c.cmd.ProcessState.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == syscall.SIGKILL {
-		return nil
-	}
-	return result
-}
-func (c *osChild) waitResult() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.result
+	return nil
 }
 func (c *osChild) signal(signal syscall.Signal) error {
 	if err := syscall.Kill(-c.cmd.Process.Pid, signal); err == nil {
