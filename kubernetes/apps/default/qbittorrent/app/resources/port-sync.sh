@@ -12,7 +12,6 @@ SNAPSHOT_TARGET=""
 GENERATION=""
 GENERATION_DIR=""
 PORT=""
-LAST_PORT=""
 
 log() {
   printf '%s %s\n' "$(date -Iseconds)" "$*" >&2
@@ -74,10 +73,6 @@ read_active_port() {
 sync_port_once() {
   read_active_port || return 1
 
-  if [ "${LAST_PORT}" = "${PORT}" ]; then
-    return 0
-  fi
-
   current="$(curl -fsS -m 5 "${QBIT_URL}/api/v2/app/preferences" | jq -er '.listen_port | select(type == "number" and floor == . and . >= 1 and . <= 65535)')" || return 1
   generation_is_still_ready || return 1
 
@@ -89,8 +84,6 @@ sync_port_once() {
     generation_is_still_ready || return 1
     log "updated qBittorrent for the active generation"
   fi
-
-  LAST_PORT="${PORT}"
 }
 
 main() {

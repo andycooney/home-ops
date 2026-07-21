@@ -28,6 +28,25 @@ assert_count() {
   [ "${count}" = "$3" ] || fail "$1 contains $2 ${count} times, want $3"
 }
 
+assert_exact_without_line_breaks() {
+  actual_file="$1"
+  expected_value="$2"
+  expected_file="${test_root}/expected.$$.tmp"
+  printf '%s' "${expected_value}" > "${expected_file}"
+  cmp -s "${expected_file}" "${actual_file}" || fail "${actual_file} does not contain the exact expected value"
+  if LC_ALL=C od -An -tx1 "${actual_file}" | grep -E '(^|[[:space:]])(0a|0d)([[:space:]]|$)' >/dev/null; then
+    fail "${actual_file} contains CR or LF"
+  fi
+  rm -f "${expected_file}"
+}
+
+assert_no_request_temporaries() {
+  pf_dir="$1"
+  if find "${pf_dir}" -maxdepth 1 -type f -name '.*.request.*' | grep . >/dev/null; then
+    fail "sensitive request temporary remains in ${pf_dir}"
+  fi
+}
+
 file_mode() {
   if stat -c '%a' "$1" >/dev/null 2>&1; then
     stat -c '%a' "$1"
@@ -60,6 +79,7 @@ run_pf() {
   env \
     PATH="${stub_dir}:${PATH}" \
     CURL_LOG="${curl_log}" \
+    CURL_CAPTURE_DIR="${runtime}/curl-capture" \
     RUNTIME_DIR="${runtime}" \
     READY_LINK_FOR_TEST="${runtime}/ready" \
     PIA_PF_RUN_ONCE=1 \
@@ -81,12 +101,14 @@ run_sync() {
     RUNTIME_DIR="${runtime}" \
     READY_LINK_FOR_TEST="${runtime}/ready" \
     SLEEP_SWITCH_MARKER="${runtime}/.sleep-switched" \
+    SLEEP_COUNTER_FILE="${runtime}/.sleep-counter" \
+    QBIT_STATE_FILE="${runtime}/.qbit-state" \
     TEST_QBIT_CURRENT=40000 \
     "$@" \
     sh "${sync_script}" >"${stdout}" 2>"${stderr}"
 }
 
-payload_json='{"port":49152,"expires_at":"2030-01-01T00:00:00Z"}'
+payload_json='{"port":49152,"expires_at":"2099-01-01T00:00:00Z"}'
 payload="$(printf '%s' "${payload_json}" | base64 | tr -d '\n')"
 signature='fixture-signature-never-log'
 signature_response="$(jq -cn --arg payload "${payload}" --arg signature "${signature}" '{status:"OK",payload:$payload,signature:$signature}')"
@@ -103,13 +125,13 @@ pf_dir="${runtime}/sessions/gen-one/pf"
 [ "$(cat "${pf_dir}/port")" = '{"generation":"gen-one","port":49152}' ] || fail 'PF port record is not strict generation JSON'
 [ "$(cat "${pf_dir}/payload")" = "${payload}" ] || fail 'payload publication failed'
 [ "$(cat "${pf_dir}/signature")" = "${signature}" ] || fail 'signature publication failed'
-[ "$(cat "${pf_dir}/expires-at")" = '2030-01-01T00:00:00Z' ] || fail 'expiry publication failed'
+[ "$(cat "${pf_dir}/expires-at")" = '2099-01-01T00:00:00Z' ] || fail 'expiry publication failed'
 for file in payload signature expires-at port; do
   [ "$(file_mode "${pf_dir}/${file}")" = 600 ] || fail "${file} mode is not 0600"
 done
 assert_contains "${curl_log}" '--interface tun0'
 assert_contains "${curl_log}" '--connect-to ca.example.invalid:19999:10.0.0.1:19999'
-assert_contains "${curl_log}" "token@${runtime}/sessions/gen-one/pia.token"
+assert_contains "${curl_log}" "token@${pf_dir}/.token.request."
 assert_contains "${curl_log}" '/getSignature'
 assert_contains "${curl_log}" '/bindPort'
 for output in "${curl_log}" "${test_root}/pf-success.out" "${test_root}/pf-success.err"; do
@@ -118,6 +140,50 @@ for output in "${curl_log}" "${test_root}/pf-success.out" "${test_root}/pf-succe
   assert_not_contains "${output}" "${signature}"
   assert_not_contains "${output}" "${signature_response}"
 done
+
+token_captures=("${runtime}/curl-capture"/token.*)
+payload_captures=("${runtime}/curl-capture"/payload.*)
+signature_captures=("${runtime}/curl-capture"/signature.*)
+[ "${#token_captures[@]}" = 1 ] || fail 'expected one captured token request'
+[ "${#payload_captures[@]}" = 1 ] || fail 'expected one captured payload request'
+[ "${#signature_captures[@]}" = 1 ] || fail 'expected one captured signature request'
+assert_exact_without_line_breaks "${token_captures[0]}" 'fixture-token-never-log'
+assert_exact_without_line_breaks "${payload_captures[0]}" "${payload}"
+assert_exact_without_line_breaks "${signature_captures[0]}" "${signature}"
+assert_no_request_temporaries "${pf_dir}"
+
+run_pf "${runtime}" "${curl_log}" "${test_root}/pf-restart.out" "${test_root}/pf-restart.err"
+assert_count "${curl_log}" '/getSignature' 1
+assert_count "${curl_log}" '/bindPort' 2
+assert_no_request_temporaries "${pf_dir}"
+
+runtime="${test_root}/pf-renewal"
+mkdir -p "${runtime}/sessions"
+create_generation "${runtime}" gen-renew ""
+ln -s sessions/gen-renew "${runtime}/ready"
+curl_log="${test_root}/pf-renewal.curl"
+: > "${curl_log}"
+run_pf "${runtime}" "${curl_log}" "${test_root}/pf-renewal.out" "${test_root}/pf-renewal.err" \
+  PIA_PF_RUN_ONCE=0 PIA_PF_MAX_CYCLES=3 RENEW_SECONDS=0
+assert_count "${curl_log}" '/getSignature' 1
+assert_count "${curl_log}" '/bindPort' 3
+assert_no_request_temporaries "${runtime}/sessions/gen-renew/pf"
+
+runtime="${test_root}/pf-generation-change"
+mkdir -p "${runtime}/sessions"
+create_generation "${runtime}" gen-old ""
+create_generation "${runtime}" gen-new ""
+ln -s sessions/gen-old "${runtime}/ready"
+curl_log="${test_root}/pf-generation-change.curl"
+: > "${curl_log}"
+run_pf "${runtime}" "${curl_log}" "${test_root}/pf-generation-change.out" "${test_root}/pf-generation-change.err" \
+  PIA_PF_RUN_ONCE=0 PIA_PF_MAX_CYCLES=1 SWITCH_READY_AFTER_BIND=gen-new
+assert_count "${curl_log}" '/getSignature' 2
+assert_count "${curl_log}" '/bindPort' 2
+[ -s "${runtime}/sessions/gen-old/pf/port" ] || fail 'old generation allocation was not published'
+[ -s "${runtime}/sessions/gen-new/pf/port" ] || fail 'new generation did not obtain a fresh allocation'
+assert_no_request_temporaries "${runtime}/sessions/gen-old/pf"
+assert_no_request_temporaries "${runtime}/sessions/gen-new/pf"
 
 runtime="${test_root}/pf-wait"
 mkdir -p "${runtime}/sessions"
@@ -154,6 +220,7 @@ fi
 assert_not_contains "${test_root}/pf-error-redaction.err" 'response-body-never-log'
 assert_not_contains "${test_root}/pf-error-redaction.err" 'signature-never-log'
 assert_not_contains "${test_root}/pf-error-redaction.err" "${error_response}"
+assert_no_request_temporaries "${runtime}/sessions/gen-one/pf"
 
 assert_contains "${pf_script}" 'RENEW_SECONDS:-900'
 assert_not_contains "${pf_script}" 'PIA_USERNAME'
@@ -196,6 +263,19 @@ curl_log="${test_root}/sync-repeat.curl"
 : > "${curl_log}"
 run_sync "${runtime}" "${curl_log}" "${test_root}/sync-repeat.out" "${test_root}/sync-repeat.err" PORT_SYNC_MAX_LOOPS=2
 assert_count "${curl_log}" '/setPreferences' 1
+assert_count "${curl_log}" '/api/v2/app/preferences' 2
+
+runtime="${test_root}/sync-restart"
+mkdir -p "${runtime}/sessions"
+create_generation "${runtime}" gen-one 49152
+ln -s sessions/gen-one "${runtime}/ready"
+curl_log="${test_root}/sync-restart.curl"
+: > "${curl_log}"
+run_sync "${runtime}" "${curl_log}" "${test_root}/sync-restart.out" "${test_root}/sync-restart.err" \
+  PORT_SYNC_MAX_LOOPS=3 RESET_QBIT_ON_SLEEP_NUMBER=2 RESET_QBIT_VALUE=40000
+assert_count "${curl_log}" '/api/v2/app/preferences' 3
+assert_count "${curl_log}" '/setPreferences' 2
+assert_count "${curl_log}" 'json={"listen_port":49152,"random_port":false}' 2
 
 runtime="${test_root}/sync-generation-change"
 mkdir -p "${runtime}/sessions"

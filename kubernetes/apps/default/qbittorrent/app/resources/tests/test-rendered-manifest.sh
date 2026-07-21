@@ -30,7 +30,7 @@ jq -e --arg image "${expected_runtime_image}" --arg helperImage "${expected_help
   ($pod.initContainers[0].securityContext.runAsGroup == 0) and
   ($pod.initContainers[0].securityContext.privileged == false) and
   ($pod.initContainers[0].securityContext.allowPrivilegeEscalation == false) and
-  ($pod.initContainers[0].securityContext.capabilities.add == ["NET_ADMIN"]) and
+  (($pod.initContainers[0].securityContext.capabilities.add | sort) == ["NET_ADMIN"]) and
   ($pod.initContainers[0].securityContext.capabilities.drop == ["ALL"]) and
   (($pod.initContainers[0].volumeMounts // []) | length == 0) and
 
@@ -55,7 +55,7 @@ jq -e --arg image "${expected_runtime_image}" --arg helperImage "${expected_help
   ($pod.containers[] | select(.name == "gluetun") | .securityContext.runAsGroup == 0) and
   ($pod.containers[] | select(.name == "gluetun") | .securityContext.privileged == false) and
   ($pod.containers[] | select(.name == "gluetun") | .securityContext.allowPrivilegeEscalation == false) and
-  ($pod.containers[] | select(.name == "gluetun") | .securityContext.capabilities.add == ["NET_ADMIN"]) and
+  ($pod.containers[] | select(.name == "gluetun") | (.securityContext.capabilities.add | sort) == ["CHOWN", "DAC_OVERRIDE", "NET_ADMIN"]) and
   ($pod.containers[] | select(.name == "gluetun") | .securityContext.capabilities.drop == ["ALL"]) and
   ($pod.containers[] | select(.name == "gluetun") | .livenessProbe.exec.command == ["/usr/local/bin/pia-runtime", "healthcheck"]) and
   ($pod.containers[] | select(.name == "gluetun") | .readinessProbe.exec.command == ["/usr/local/bin/pia-runtime", "readycheck"]) and
@@ -84,6 +84,10 @@ jq -e --arg image "${expected_runtime_image}" --arg helperImage "${expected_help
   ($pod.volumes[] | select(.name == "pia-runtime") | .emptyDir.medium == "Memory") and
   ($pod.volumes[] | select(.name == "pia-runtime") | .emptyDir.sizeLimit == "16Mi") and
   ([ $pod.containers[] | select(any(.volumeMounts[]?; .name == "pia-runtime")) | .name ] | sort == ["gluetun", "pia-port-forward", "port-sync"]) and
+  ($pod.containers[] | select(.name == "gluetun") | .volumeMounts[] | select(.name == "pia-runtime") | (.readOnly // false) == false) and
+  ($pod.containers[] | select(.name == "pia-port-forward") | .volumeMounts[] | select(.name == "pia-runtime") | (.readOnly // false) == false) and
+  ($pod.containers[] | select(.name == "port-sync") | .volumeMounts[] | select(.name == "pia-runtime") | .readOnly == true) and
+  ($pod.containers[] | select(.name == "gluetun") | [ .volumeMounts[].name ] | any(. == "config" or . == "media" or . == "unprocessed") | not) and
   ([ $pod.containers[] | select(any(.volumeMounts[]?; .name == "tun")) | .name ] == ["gluetun"]) and
   ([ $pod.containers[] | select((.envFrom // []) | any(.secretRef.name == "qbittorrent-vpn-secret")) | .name ] == ["gluetun"])
 ' "${test_root}/deployment.json" >/dev/null

@@ -5,3 +5,12 @@ if [ -n "${SWITCH_READY_ON_SLEEP:-}" ] && [ ! -e "${SLEEP_SWITCH_MARKER:?}" ]; t
   : > "${SLEEP_SWITCH_MARKER}"
   ln -sfn "sessions/${SWITCH_READY_ON_SLEEP}" "${READY_LINK_FOR_TEST:?}"
 fi
+
+if [ -n "${SLEEP_COUNTER_FILE:-}" ]; then
+  sleep_count="$(cat "${SLEEP_COUNTER_FILE}" 2>/dev/null || printf '0')"
+  sleep_count=$((sleep_count + 1))
+  printf '%s' "${sleep_count}" > "${SLEEP_COUNTER_FILE}"
+  if [ "${sleep_count}" = "${RESET_QBIT_ON_SLEEP_NUMBER:-never}" ]; then
+    printf '%s' "${RESET_QBIT_VALUE:-40000}" > "${QBIT_STATE_FILE:?}"
+  fi
+fi
