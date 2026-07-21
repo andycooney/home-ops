@@ -226,7 +226,7 @@ publish_allocation() {
     cleanup_publication_files
     return 1
   }
-  write_exact_file "${PORT_PUBLISH_TMP}" "$(printf '{\"generation\":\"%s\",\"port\":%s}' "${GENERATION}" "${PORT}")" || {
+  write_exact_file "${PORT_PUBLISH_TMP}" "$(printf '{"generation":"%s","port":%s}' "${GENERATION}" "${PORT}")" || {
     cleanup_publication_files
     return 1
   }
