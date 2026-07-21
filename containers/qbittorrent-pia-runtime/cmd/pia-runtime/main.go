@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -28,6 +30,12 @@ var version = "dev"
 var revision = "unknown"
 var created = "unknown"
 
+const (
+	liveProbeURL  = "http://127.0.0.1:8001/live"
+	readyProbeURL = "http://127.0.0.1:8001/ready"
+	probeTimeout  = 2 * time.Second
+)
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		log.Printf("pia-runtime: %s", err)
@@ -37,7 +45,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: pia-runtime <firewall-init|supervise|self-test|healthcheck>")
+		return errors.New("usage: pia-runtime <firewall-init|supervise|self-test|healthcheck|readycheck>")
 	}
 	switch args[0] {
 	case "firewall-init":
@@ -47,7 +55,9 @@ func run(args []string) error {
 	case "self-test":
 		return selfTest()
 	case "healthcheck":
-		return probe("http://127.0.0.1:8001/live")
+		return probe(liveProbeURL)
+	case "readycheck":
+		return probe(readyProbeURL)
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
@@ -58,7 +68,7 @@ func firewallInit() error {
 	if err != nil {
 		return err
 	}
-	manager := &firewall.Manager{Config: firewall.Config{AllowedSubnets: cfg.AllowedSubnets, ApplicationUID: cfg.ApplicationUID, ServicePort: cfg.ServicePort, Interface: cfg.Interface}}
+	manager := &firewall.Manager{Config: firewall.Config{AllowedSubnets: cfg.AllowedSubnets, ApplicationUID: cfg.ApplicationUID, PFHelperUID: cfg.PFHelperUID, ServicePort: cfg.ServicePort, Interface: cfg.Interface}}
 	return manager.Init(context.Background())
 }
 
@@ -72,7 +82,7 @@ func supervise() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	firewallManager := &firewall.Manager{Config: firewall.Config{AllowedSubnets: cfg.AllowedSubnets, ApplicationUID: cfg.ApplicationUID, ServicePort: cfg.ServicePort, Interface: cfg.Interface}}
+	firewallManager := &firewall.Manager{Config: firewall.Config{AllowedSubnets: cfg.AllowedSubnets, ApplicationUID: cfg.ApplicationUID, PFHelperUID: cfg.PFHelperUID, ServicePort: cfg.ServicePort, Interface: cfg.Interface}}
 	if err := firewallManager.Init(ctx); err != nil {
 		return err
 	}
@@ -83,7 +93,7 @@ func supervise() error {
 	}
 	defer server.Shutdown(context.Background())
 	apiClient := &api.Client{ServerListURL: cfg.ServerListURL, TokenURL: cfg.TokenURL, CACertPath: cfg.CACertPath, ProbeTimeout: cfg.ProbeTimeout}
-	publisher := &session.Publisher{Root: cfg.RuntimeDir, ReaderGID: cfg.ReaderGID}
+	publisher := &session.Publisher{Root: cfg.RuntimeDir, ReaderGID: cfg.ReaderGID, PFHelperUID: cfg.PFHelperUID}
 	verifier := &health.Verifier{Interface: cfg.Interface, HTTPSURL: cfg.PublicIPURL, Timeout: cfg.ProbeTimeout}
 	s := &supervisor.Supervisor{Config: cfg, API: apiClient, Firewall: firewallManager, Publisher: publisher, Verifier: verifier, Process: supervisor.OSProcess{}, Status: status, Logger: log.New(os.Stdout, "pia-runtime ", log.LstdFlags|log.LUTC)}
 	return s.Run(ctx)
@@ -109,6 +119,14 @@ func selfTest() error {
 	if _, err := api.ParseServerList(strings.NewReader(fixture)); err != nil {
 		return err
 	}
+	for _, endpoint := range []string{liveProbeURL, readyProbeURL} {
+		if err := validateProbeEndpoint(endpoint); err != nil {
+			return err
+		}
+	}
+	if err := selfTestProbes(); err != nil {
+		return err
+	}
 	if os.Getenv("PIA_RUNTIME_IMAGE_SELF_TEST") == "1" {
 		if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 			return errors.New("image self-test requires linux/amd64")
@@ -131,7 +149,14 @@ func selfTest() error {
 }
 
 func probe(endpoint string) error {
-	client := &http.Client{Timeout: 2 * time.Second}
+	if err := validateProbeEndpoint(endpoint); err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: probeTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return probeResponse(client, endpoint)
+}
+
+func probeResponse(client *http.Client, endpoint string) error {
 	resp, err := client.Get(endpoint)
 	if err != nil {
 		return err
@@ -139,6 +164,42 @@ func probe(endpoint string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("probe status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func validateProbeEndpoint(endpoint string) error {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Port() != "8001" || parsed.User != nil || (parsed.Path != "/live" && parsed.Path != "/ready") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("probe endpoint must be the local supervisor")
+	}
+	return nil
+}
+
+func selfTestProbes() error {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return fmt.Errorf("start local probe self-test: %w", err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/live", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.HandleFunc("/ready", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	server := &http.Server{Handler: mux, ReadHeaderTimeout: time.Second}
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(listener) }()
+	client := &http.Client{Timeout: probeTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	for _, path := range []string{"/live", "/ready"} {
+		if err := probeResponse(client, "http://"+listener.Addr().String()+path); err != nil {
+			_ = server.Close()
+			<-done
+			return fmt.Errorf("local probe self-test: %w", err)
+		}
+	}
+	if err := server.Close(); err != nil {
+		return err
+	}
+	if err := <-done; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
 	}
 	return nil
 }

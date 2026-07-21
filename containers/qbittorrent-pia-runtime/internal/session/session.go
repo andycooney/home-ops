@@ -1,8 +1,11 @@
 package session
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -10,6 +13,12 @@ import (
 )
 
 const ReaderID = 65532
+
+var (
+	ErrPFPortPending = errors.New("PF port is not published")
+	ErrPFPortInvalid = errors.New("PF port publication is invalid")
+	ErrPFPortStale   = errors.New("PF port publication is stale")
+)
 
 type Ownership interface {
 	Chown(path string, uid, gid int) error
@@ -24,9 +33,10 @@ type Generation struct {
 }
 
 type Publisher struct {
-	Root      string
-	ReaderGID int
-	Owner     Ownership
+	Root        string
+	ReaderGID   int
+	PFHelperUID int
+	Owner       Ownership
 }
 
 func (p Publisher) PublishCurrent(g Generation) (string, error) {
@@ -35,6 +45,9 @@ func (p Publisher) PublishCurrent(g Generation) (string, error) {
 	}
 	if p.ReaderGID == 0 {
 		p.ReaderGID = ReaderID
+	}
+	if p.PFHelperUID == 0 {
+		p.PFHelperUID = ReaderID
 	}
 	if p.Owner == nil {
 		p.Owner = OSOwnership{}
@@ -58,8 +71,8 @@ func (p Publisher) PublishCurrent(g Generation) (string, error) {
 			return "", err
 		}
 	}
-	for _, name := range []string{"payload", "signature", "expires-at"} {
-		if err := p.atomicFile(filepath.Join(dir, "pf"), name, nil, 0o600, p.ReaderGID, p.ReaderGID); err != nil {
+	for _, name := range []string{"payload", "signature", "expires-at", "port"} {
+		if err := p.atomicFile(filepath.Join(dir, "pf"), name, nil, 0o600, p.PFHelperUID, p.ReaderGID); err != nil {
 			return "", err
 		}
 	}
@@ -88,6 +101,52 @@ func (p Publisher) InvalidateReady() error {
 
 func (p Publisher) InvalidateCurrent() error { return p.invalidateLink("current") }
 
+func (p Publisher) ReadForwardedPort(id string) (uint16, error) {
+	if !validID(id) {
+		return 0, ErrPFPortInvalid
+	}
+	path := filepath.Join(p.Root, "sessions", id, "pf", "port")
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, ErrPFPortPending
+		}
+		return 0, fmt.Errorf("read PF port metadata: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		return 0, ErrPFPortInvalid
+	}
+	if info.Size() == 0 {
+		return 0, ErrPFPortPending
+	}
+	if info.Size() > 256 {
+		return 0, ErrPFPortInvalid
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, fmt.Errorf("read PF port metadata: %w", err)
+	}
+	var record struct {
+		Generation string `json:"generation"`
+		Port       int    `json:"port"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&record); err != nil {
+		return 0, ErrPFPortInvalid
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return 0, ErrPFPortInvalid
+	}
+	if record.Generation != id {
+		return 0, ErrPFPortStale
+	}
+	if record.Port < 1 || record.Port > 65535 {
+		return 0, ErrPFPortInvalid
+	}
+	return uint16(record.Port), nil
+}
+
 func (p Publisher) invalidateLink(name string) error {
 	path := filepath.Join(p.Root, name)
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -115,7 +174,7 @@ func (p Publisher) ensureDirectories(id string) error {
 		{p.Root, 0o750, 0, p.ReaderGID},
 		{filepath.Join(p.Root, "sessions"), 0o710, 0, p.ReaderGID},
 		{filepath.Join(p.Root, "sessions", id), 0o710, 0, p.ReaderGID},
-		{filepath.Join(p.Root, "sessions", id, "pf"), 0o730, p.ReaderGID, p.ReaderGID},
+		{filepath.Join(p.Root, "sessions", id, "pf"), 0o730, p.PFHelperUID, p.ReaderGID},
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir.path, dir.mode); err != nil {

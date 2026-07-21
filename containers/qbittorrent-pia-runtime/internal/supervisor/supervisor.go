@@ -51,6 +51,7 @@ type Firewall interface {
 type Publisher interface {
 	PublishCurrent(session.Generation) (string, error)
 	PublishReady(string) error
+	ReadForwardedPort(string) (uint16, error)
 	InvalidateReady() error
 	InvalidateCurrent() error
 	Remove(string) error
@@ -68,20 +69,23 @@ type Process interface {
 type PublicIP func(context.Context, string, time.Duration) (netip.Addr, error)
 
 type Supervisor struct {
-	Config    config.Config
-	API       API
-	Firewall  Firewall
-	Publisher Publisher
-	Verifier  TunnelVerifier
-	Process   Process
-	Status    *health.Status
-	PublicIP  PublicIP
-	Logger    *log.Logger
-	Now       func() time.Time
-	Sleep     func(context.Context, time.Duration) error
-	cooldown  map[string]time.Time
-	child     Child
-	current   string
+	Config          config.Config
+	API             API
+	Firewall        Firewall
+	Publisher       Publisher
+	Verifier        TunnelVerifier
+	Process         Process
+	Status          *health.Status
+	PublicIP        PublicIP
+	Logger          *log.Logger
+	Now             func() time.Time
+	Sleep           func(context.Context, time.Duration) error
+	cooldown        map[string]time.Time
+	child           Child
+	current         string
+	pfPort          uint16
+	cleanupRequired bool
+	cycle           func(context.Context, netip.Addr) error
 }
 
 func (s *Supervisor) Run(ctx context.Context) error {
@@ -93,17 +97,16 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		s.Status.Fail()
 		return fmt.Errorf("install fail-closed firewall: %w", err)
 	}
-	preTunnelIP, err := s.bootstrapPublicIP(ctx)
-	if err != nil {
-		return s.shutdown()
-	}
-	return s.backoffLoop(ctx, preTunnelIP)
+	return s.backoffLoop(ctx)
 }
 
 func (s *Supervisor) bootstrapPublicIP(ctx context.Context) (netip.Addr, error) {
 	backoff := 30 * time.Second
 	for ctx.Err() == nil {
 		s.transition(StateBootstrap, false)
+		if err := s.Firewall.Apply(ctx, firewall.Bootstrap, firewall.Endpoint{}); err != nil {
+			return netip.Addr{}, s.lockAndStop(fmt.Errorf("apply bootstrap firewall: %w", err))
+		}
 		preTunnelIP, err := s.PublicIP(ctx, s.Config.PublicIPURL, s.Config.ProbeTimeout)
 		if err == nil && preTunnelIP.IsValid() {
 			return preTunnelIP, nil
@@ -120,14 +123,37 @@ func (s *Supervisor) bootstrapPublicIP(ctx context.Context) (netip.Addr, error) 
 	return netip.Addr{}, ctx.Err()
 }
 
-func (s *Supervisor) backoffLoop(ctx context.Context, preTunnelIP netip.Addr) error {
+func (s *Supervisor) backoffLoop(ctx context.Context) error {
 	backoff := 30 * time.Second
 	for ctx.Err() == nil {
-		err := s.runCycle(ctx, preTunnelIP)
+		if s.cleanupRequired {
+			if err := s.failover(); err != nil {
+				s.transition(StateBackoff, false)
+				delay := jitter(backoff, s.Now())
+				s.log("fail-closed cleanup failed; retrying in %s", delay)
+				if err := s.Sleep(ctx, delay); err != nil {
+					break
+				}
+				backoff = nextBackoff(backoff)
+				continue
+			}
+		}
+		preTunnelIP, err := s.bootstrapPublicIP(ctx)
+		if err == nil {
+			cycle := s.runCycle
+			if s.cycle != nil {
+				cycle = s.cycle
+			}
+			err = cycle(ctx, preTunnelIP)
+		}
 		if ctx.Err() != nil {
 			break
 		}
-		if api.IsAuthentication(err) {
+		cleanupErr := s.failover()
+		if cleanupErr != nil {
+			err = errors.Join(err, cleanupErr)
+		}
+		if cleanupErr == nil && api.IsAuthentication(err) {
 			s.transition(StateAuthenticationFailed, false)
 			s.log("authentication failed; credentials were not logged")
 			if err := s.Sleep(ctx, s.Config.AuthRetry); err != nil {
@@ -211,22 +237,22 @@ func (s *Supervisor) runCycle(ctx context.Context, preTunnelIP netip.Addr) error
 		if err != nil {
 			return err
 		}
-		generation := session.Generation{ID: generationID, Region: candidate.RegionID, Endpoint: netip.AddrPortFrom(netip.MustParseAddr(candidate.IP), registration.ServerPort).String(), TLSHostname: candidate.Hostname, WGGateway: registration.ServerIP, PFGateway: candidate.IP, Token: token, WGConfig: wgConfig}
+		tunnelIP := netip.MustParseAddr(candidate.IP)
+		pfGateway := netip.MustParseAddr(registration.ServerIP)
+		generation := session.Generation{ID: generationID, Region: candidate.RegionID, Endpoint: netip.AddrPortFrom(tunnelIP, registration.ServerPort).String(), TLSHostname: candidate.Hostname, WGGateway: registration.ServerIP, PFGateway: registration.ServerIP, Token: token, WGConfig: wgConfig}
 		dir, err := s.Publisher.PublishCurrent(generation)
 		if err != nil {
 			return err
 		}
 		s.current = generationID
-		tunnelEndpoint := firewall.Endpoint{IP: netip.MustParseAddr(candidate.IP), Port: registration.ServerPort}
+		tunnelEndpoint := firewall.Endpoint{IP: tunnelIP, Port: registration.ServerPort, PFGateway: pfGateway}
 		if err := s.startAndVerify(ctx, dir, registration.DNSServers[0], tunnelEndpoint, preTunnelIP); err != nil {
-			lastErr = err
-			s.failover(candidate)
-			continue
+			s.cool(candidate)
+			return err
 		}
 		if err := s.monitorHealthy(ctx, candidate, tunnelEndpoint, preTunnelIP); err != nil {
-			lastErr = err
-			s.failover(candidate)
-			continue
+			s.cool(candidate)
+			return err
 		}
 		return nil
 	}
@@ -239,7 +265,7 @@ func (s *Supervisor) runCycle(ctx context.Context, preTunnelIP netip.Addr) error
 func (s *Supervisor) startAndVerify(ctx context.Context, dir, dns string, endpoint firewall.Endpoint, preTunnelIP netip.Addr) error {
 	s.transition(StateStarting, false)
 	if err := s.Firewall.Apply(ctx, firewall.Verifying, endpoint); err != nil {
-		return err
+		return s.lockAndStop(fmt.Errorf("apply verifying firewall: %w", err))
 	}
 	env := ChildEnvironment(os.Environ(), dir+"/wg0.conf")
 	child, err := s.Process.Start(s.Config.GluetunEntrypoint, env)
@@ -262,15 +288,7 @@ func (s *Supervisor) startAndVerify(ctx context.Context, dir, dns string, endpoi
 			verifier.DNSAddress = dns
 		}
 		if _, err := s.Verifier.Verify(ctx, preTunnelIP); err == nil {
-			if err := s.Publisher.PublishReady(s.current); err != nil {
-				return err
-			}
-			if err := s.Firewall.Apply(ctx, firewall.Healthy, endpoint); err != nil {
-				_ = s.Publisher.InvalidateReady()
-				return err
-			}
-			s.transition(StateHealthy, true)
-			return nil
+			return s.promoteReady(ctx, endpoint)
 		}
 		if err := s.Sleep(ctx, 5*time.Second); err != nil {
 			return err
@@ -303,21 +321,20 @@ func (s *Supervisor) monitorHealthy(ctx context.Context, candidate api.Candidate
 		if err == nil {
 			failures = 0
 			if !s.Status.Ready() {
-				if err := s.Publisher.PublishReady(s.current); err != nil {
+				if err := s.promoteReady(ctx, endpoint); err != nil {
 					return err
 				}
-				if err := s.Firewall.Apply(ctx, firewall.Healthy, endpoint); err != nil {
-					return err
-				}
-				s.transition(StateHealthy, true)
+			}
+			if err := s.syncForwardedPort(ctx, endpoint); err != nil {
+				return err
 			}
 			continue
 		}
 		failures++
 		if failures == 1 {
-			_ = s.Publisher.InvalidateReady()
-			_ = s.Firewall.Apply(ctx, firewall.Verifying, endpoint)
-			s.transition(StateVerifying, false)
+			if err := s.restrictForVerification(ctx, endpoint); err != nil {
+				return err
+			}
 		}
 		if failures >= s.Config.HealthFailures {
 			return fmt.Errorf("health failure threshold reached for %s", candidate.RegionID)
@@ -325,33 +342,140 @@ func (s *Supervisor) monitorHealthy(ctx context.Context, candidate api.Candidate
 	}
 }
 
-func (s *Supervisor) failover(candidate api.Candidate) {
-	s.transition(StateFailingOver, false)
-	_ = s.Publisher.InvalidateReady()
-	_ = s.Publisher.InvalidateCurrent()
-	_ = s.Firewall.Apply(context.Background(), firewall.Locked, firewall.Endpoint{})
-	if s.child != nil {
-		_ = s.child.Stop(s.Config.ShutdownGrace)
-		s.child = nil
+func (s *Supervisor) promoteReady(ctx context.Context, endpoint firewall.Endpoint) error {
+	endpoint.ForwardedPort = s.pfPort
+	if err := s.Firewall.Apply(ctx, firewall.Healthy, endpoint); err != nil {
+		return s.lockAndStop(fmt.Errorf("apply healthy firewall: %w", err))
 	}
-	if s.current != "" {
-		_ = s.Publisher.Remove(s.current)
-		s.current = ""
+	if err := s.Publisher.PublishReady(s.current); err != nil {
+		endpoint.ForwardedPort = 0
+		s.pfPort = 0
+		if restrictErr := s.Firewall.Apply(ctx, firewall.Verifying, endpoint); restrictErr != nil {
+			return s.lockAndStop(errors.Join(fmt.Errorf("publish ready metadata: %w", err), fmt.Errorf("revert verifying firewall: %w", restrictErr)))
+		}
+		return fmt.Errorf("publish ready metadata: %w", err)
 	}
-	s.cool(candidate)
+	s.transition(StateHealthy, true)
+	return nil
 }
-func (s *Supervisor) shutdown() error {
-	s.transition(StateShuttingDown, false)
-	_ = s.Publisher.InvalidateReady()
-	_ = s.Publisher.InvalidateCurrent()
-	_ = s.Firewall.Apply(context.Background(), firewall.Locked, firewall.Endpoint{})
-	if s.child != nil {
-		_ = s.child.Stop(s.Config.ShutdownGrace)
+
+func (s *Supervisor) restrictForVerification(ctx context.Context, endpoint firewall.Endpoint) error {
+	s.transition(StateVerifying, false)
+	endpoint.ForwardedPort = 0
+	s.pfPort = 0
+	if err := s.Firewall.Apply(ctx, firewall.Verifying, endpoint); err != nil {
+		return s.lockAndStop(fmt.Errorf("apply restricted firewall: %w", err))
 	}
-	if s.current != "" {
-		_ = s.Publisher.Remove(s.current)
+	if err := s.Publisher.InvalidateReady(); err != nil {
+		return fmt.Errorf("invalidate ready metadata: %w", err)
 	}
 	return nil
+}
+
+func (s *Supervisor) syncForwardedPort(ctx context.Context, endpoint firewall.Endpoint) error {
+	port, err := s.Publisher.ReadForwardedPort(s.current)
+	if errors.Is(err, session.ErrPFPortPending) {
+		if s.pfPort != 0 {
+			endpoint.ForwardedPort = 0
+			if firewallErr := s.Firewall.Apply(ctx, firewall.Healthy, endpoint); firewallErr != nil {
+				return s.lockAndStop(fmt.Errorf("revoke unpublished PF port: %w", firewallErr))
+			}
+			s.pfPort = 0
+		}
+		return nil
+	}
+	if err != nil {
+		if s.pfPort != 0 {
+			endpoint.ForwardedPort = 0
+			if firewallErr := s.Firewall.Apply(ctx, firewall.Healthy, endpoint); firewallErr != nil {
+				return s.lockAndStop(errors.Join(fmt.Errorf("reject PF port publication: %w", err), fmt.Errorf("revoke PF inbound allowance: %w", firewallErr)))
+			}
+			s.pfPort = 0
+		}
+		return fmt.Errorf("reject PF port publication: %w", err)
+	}
+	if port == s.pfPort {
+		return nil
+	}
+	endpoint.ForwardedPort = port
+	if err := s.Firewall.Apply(ctx, firewall.Healthy, endpoint); err != nil {
+		return s.lockAndStop(fmt.Errorf("apply PF inbound allowance: %w", err))
+	}
+	s.pfPort = port
+	return nil
+}
+
+func (s *Supervisor) lockAndStop(cause error) error {
+	s.pfPort = 0
+	lockErr := s.Firewall.Apply(context.Background(), firewall.Locked, firewall.Endpoint{})
+	stopErr := s.stopChild()
+	if lockErr != nil {
+		lockErr = fmt.Errorf("apply locked firewall: %w", lockErr)
+	}
+	if stopErr != nil {
+		stopErr = fmt.Errorf("stop Gluetun child: %w", stopErr)
+	}
+	return errors.Join(cause, lockErr, stopErr)
+}
+
+func (s *Supervisor) stopChild() error {
+	if s.child == nil {
+		return nil
+	}
+	child := s.child
+	s.child = nil
+	return child.Stop(s.Config.ShutdownGrace)
+}
+
+func (s *Supervisor) failover() error {
+	return s.deactivate(StateFailingOver)
+}
+
+func (s *Supervisor) shutdown() error {
+	return s.deactivate(StateShuttingDown)
+}
+
+func (s *Supervisor) deactivate(state State) error {
+	s.transition(state, false)
+	s.cleanupRequired = true
+	s.pfPort = 0
+	lockErr := s.Firewall.Apply(context.Background(), firewall.Locked, firewall.Endpoint{})
+	var stopErr error
+	if lockErr != nil {
+		stopErr = s.stopChild()
+	}
+	readyErr := s.Publisher.InvalidateReady()
+	currentErr := s.Publisher.InvalidateCurrent()
+	if lockErr == nil {
+		stopErr = s.stopChild()
+	}
+	var removeErr error
+	if s.current != "" {
+		removeErr = s.Publisher.Remove(s.current)
+		if removeErr == nil {
+			s.current = ""
+		}
+	}
+	if lockErr != nil {
+		lockErr = fmt.Errorf("apply locked firewall: %w", lockErr)
+	}
+	if readyErr != nil {
+		readyErr = fmt.Errorf("invalidate ready metadata: %w", readyErr)
+	}
+	if currentErr != nil {
+		currentErr = fmt.Errorf("invalidate current metadata: %w", currentErr)
+	}
+	if stopErr != nil {
+		stopErr = fmt.Errorf("stop Gluetun child: %w", stopErr)
+	}
+	if removeErr != nil {
+		removeErr = fmt.Errorf("remove generation: %w", removeErr)
+	}
+	result := errors.Join(lockErr, readyErr, currentErr, stopErr, removeErr)
+	if result == nil {
+		s.cleanupRequired = false
+	}
+	return result
 }
 func (s *Supervisor) transition(state State, ready bool) {
 	s.Status.Set(string(state), ready)
@@ -425,9 +549,14 @@ func ChildEnvironment(source []string, wgConfigPath string) []string {
 
 type OSProcess struct{}
 type osChild struct {
-	cmd  *exec.Cmd
-	done chan error
-	once sync.Once
+	cmd        *exec.Cmd
+	done       chan error
+	waitDone   chan struct{}
+	mu         sync.Mutex
+	result     error
+	stopOnce   sync.Once
+	stopResult error
+	signalFn   func(syscall.Signal) error
 }
 
 func (OSProcess) Start(path string, env []string) (Child, error) {
@@ -440,36 +569,75 @@ func (OSProcess) Start(path string, env []string) (Child, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	child := &osChild{cmd: cmd, done: make(chan error, 1)}
-	go func() { child.done <- cmd.Wait(); close(child.done) }()
+	child := &osChild{cmd: cmd, done: make(chan error, 1), waitDone: make(chan struct{})}
+	child.signalFn = child.signal
+	go func() {
+		result := cmd.Wait()
+		child.mu.Lock()
+		child.result = result
+		child.mu.Unlock()
+		close(child.waitDone)
+		child.done <- result
+		close(child.done)
+	}()
 	return child, nil
 }
 func (c *osChild) Done() <-chan error { return c.done }
 func (c *osChild) Stop(grace time.Duration) error {
-	var result error
-	c.once.Do(func() {
+	c.stopOnce.Do(func() {
+		c.stopResult = c.stop(grace)
+	})
+	return c.stopResult
+}
+func (c *osChild) stop(grace time.Duration) error {
+	select {
+	case <-c.waitDone:
+		reapOrphans(500 * time.Millisecond)
+		return c.waitResult()
+	default:
+	}
+	if err := c.signalFn(syscall.SIGTERM); err != nil {
 		select {
-		case result = <-c.done:
-			_ = c.signal(syscall.SIGKILL)
+		case <-c.waitDone:
 			reapOrphans(500 * time.Millisecond)
-			return
+			return c.waitResult()
 		default:
+			return err
 		}
-		_ = c.signal(syscall.SIGTERM)
-		timer := time.NewTimer(grace)
-		defer timer.Stop()
-		select {
-		case result = <-c.done:
-			if status, ok := c.cmd.ProcessState.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == syscall.SIGTERM {
-				result = nil
-			}
-		case <-timer.C:
-			_ = c.signal(syscall.SIGKILL)
-			result = <-c.done
+	}
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-c.waitDone:
+		result := c.waitResult()
+		if status, ok := c.cmd.ProcessState.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == syscall.SIGTERM {
+			result = nil
 		}
 		reapOrphans(500 * time.Millisecond)
-	})
+		return result
+	case <-timer.C:
+	}
+	select {
+	case <-c.waitDone:
+		reapOrphans(500 * time.Millisecond)
+		return c.waitResult()
+	default:
+	}
+	if err := c.signalFn(syscall.SIGKILL); err != nil {
+		return err
+	}
+	<-c.waitDone
+	reapOrphans(500 * time.Millisecond)
+	result := c.waitResult()
+	if status, ok := c.cmd.ProcessState.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == syscall.SIGKILL {
+		return nil
+	}
 	return result
+}
+func (c *osChild) waitResult() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.result
 }
 func (c *osChild) signal(signal syscall.Signal) error {
 	if err := syscall.Kill(-c.cmd.Process.Pid, signal); err == nil {

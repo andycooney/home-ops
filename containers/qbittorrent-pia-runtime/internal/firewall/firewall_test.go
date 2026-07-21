@@ -9,11 +9,11 @@ import (
 )
 
 func testConfig() Config {
-	return Config{AllowedSubnets: []netip.Prefix{netip.MustParsePrefix("10.42.0.0/16"), netip.MustParsePrefix("fd00:42::/64")}, ApplicationUID: 1000, ServicePort: 8080, Interface: "tun0"}
+	return Config{AllowedSubnets: []netip.Prefix{netip.MustParsePrefix("10.42.0.0/16"), netip.MustParsePrefix("fd00:42::/64")}, ApplicationUID: 1000, PFHelperUID: 65532, ServicePort: 8080, Interface: "tun0"}
 }
 
 func TestCompleteTransactionsAndNoUIDDefaultAllowance(t *testing.T) {
-	endpoint := Endpoint{IP: netip.MustParseAddr("192.0.2.10"), Port: 1337}
+	endpoint := Endpoint{IP: netip.MustParseAddr("192.0.2.10"), Port: 1337, PFGateway: netip.MustParseAddr("192.0.2.20")}
 	for _, state := range []State{Bootstrap, Selected, Verifying, Healthy, Locked} {
 		for _, ipv6 := range []bool{false, true} {
 			tx, err := Transaction(testConfig(), state, endpointFor(state, endpoint), ipv6)
@@ -44,7 +44,7 @@ func TestCompleteTransactionsAndNoUIDDefaultAllowance(t *testing.T) {
 }
 
 func TestUIDServiceRepliesAreNarrowFamilyMatchedAndOrdered(t *testing.T) {
-	endpoint := Endpoint{IP: netip.MustParseAddr("192.0.2.10"), Port: 1337}
+	endpoint := Endpoint{IP: netip.MustParseAddr("192.0.2.10"), Port: 1337, PFGateway: netip.MustParseAddr("192.0.2.20")}
 	for _, tc := range []struct {
 		name       string
 		ipv6       bool
@@ -93,7 +93,7 @@ func TestUIDServiceRepliesAreNarrowFamilyMatchedAndOrdered(t *testing.T) {
 }
 
 func TestTransitionProtocolIsNarrow(t *testing.T) {
-	endpoint := Endpoint{IP: netip.MustParseAddr("192.0.2.10"), Port: 1337}
+	endpoint := Endpoint{IP: netip.MustParseAddr("192.0.2.10"), Port: 1337, PFGateway: netip.MustParseAddr("192.0.2.20")}
 	selected, _ := Transaction(testConfig(), Selected, endpoint, false)
 	if !strings.Contains(selected, "-p tcp -d 192.0.2.10 --dport 1337") {
 		t.Fatal("registration TLS exception missing")
@@ -101,6 +101,74 @@ func TestTransitionProtocolIsNarrow(t *testing.T) {
 	healthy, _ := Transaction(testConfig(), Healthy, endpoint, false)
 	if !strings.Contains(healthy, "-p udp -d 192.0.2.10 --dport 1337") || strings.Contains(healthy, "-p tcp -d 192.0.2.10") {
 		t.Fatal("healthy endpoint exception is not UDP-only")
+	}
+}
+
+func TestPFHelperAndDynamicInboundContract(t *testing.T) {
+	base := Endpoint{IP: netip.MustParseAddr("192.0.2.10"), Port: 1337, PFGateway: netip.MustParseAddr("192.0.2.20")}
+	pfAllow := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 65532 -o tun0 -p tcp -d 192.0.2.20 --dport 19999 -j ACCEPT"
+	pfDrop := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 65532 -j DROP"
+	established := "-A PIA_RUNTIME_OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+	for _, state := range []State{Bootstrap, Selected, Verifying, Locked} {
+		tx, err := Transaction(testConfig(), state, endpointFor(state, base), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(tx, pfAllow) {
+			t.Fatalf("%s permits PF API access before HEALTHY", state)
+		}
+		if dropIndex, establishedIndex := strings.Index(tx, pfDrop), strings.Index(tx, established); dropIndex < 0 || dropIndex > establishedIndex {
+			t.Fatalf("%s does not block pre-existing PF helper flows", state)
+		}
+	}
+
+	healthy := base
+	healthy.ForwardedPort = 49152
+	ipv4, err := Transaction(testConfig(), Healthy, healthy, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowIndex, dropIndex := strings.Index(ipv4, pfAllow), strings.Index(ipv4, pfDrop); allowIndex < 0 || allowIndex > dropIndex {
+		t.Fatal("exact PF API allowance is missing or ordered after the PF helper drop")
+	}
+	for _, forbidden := range []string{
+		"--uid-owner 65532 -o tun0 -j ACCEPT",
+		"--uid-owner 65532 -o tun0 -p tcp -d 192.0.2.21",
+		"--uid-owner 65532 -o tun0 -p tcp -d 192.0.2.20 --dport 20000",
+		"--uid-owner 65532 ! -o tun0 -j ACCEPT",
+	} {
+		if strings.Contains(ipv4, forbidden) {
+			t.Fatalf("PF helper received broad access %q", forbidden)
+		}
+	}
+	for _, inbound := range []string{
+		"-A PIA_RUNTIME_INPUT -i tun0 -p tcp --dport 49152 -m conntrack --ctstate NEW -j ACCEPT",
+		"-A PIA_RUNTIME_INPUT -i tun0 -p udp --dport 49152 -m conntrack --ctstate NEW -j ACCEPT",
+	} {
+		if !strings.Contains(ipv4, inbound) {
+			t.Fatalf("missing dynamic inbound rule %q", inbound)
+		}
+	}
+	ipv6, err := Transaction(testConfig(), Healthy, healthy, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ipv6, "--uid-owner 65532 -o tun0 -p tcp") || strings.Contains(ipv6, "--dport 49152 -m conntrack --ctstate NEW -j ACCEPT") {
+		t.Fatal("IPv4 PF gateway produced IPv6 PF allowances")
+	}
+	v6Endpoint := Endpoint{IP: netip.MustParseAddr("2001:db8::10"), Port: 1337, PFGateway: netip.MustParseAddr("2001:db8::20"), ForwardedPort: 49153}
+	v6Healthy, err := Transaction(testConfig(), Healthy, v6Endpoint, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range []string{
+		"--uid-owner 65532 -o tun0 -p tcp -d 2001:db8::20 --dport 19999 -j ACCEPT",
+		"-A PIA_RUNTIME_INPUT -i tun0 -p tcp --dport 49153 -m conntrack --ctstate NEW -j ACCEPT",
+		"-A PIA_RUNTIME_INPUT -i tun0 -p udp --dport 49153 -m conntrack --ctstate NEW -j ACCEPT",
+	} {
+		if !strings.Contains(v6Healthy, rule) {
+			t.Fatalf("missing IPv6 PF rule %q", rule)
+		}
 	}
 }
 

@@ -19,17 +19,21 @@ const (
 	Verifying State = "VERIFYING"
 	Healthy   State = "HEALTHY"
 	Locked    State = "LOCKED"
+	PFAPIPort       = 19999
 )
 
 type Config struct {
 	AllowedSubnets []netip.Prefix
 	ApplicationUID int
+	PFHelperUID    int
 	ServicePort    uint16
 	Interface      string
 }
 type Endpoint struct {
-	IP   netip.Addr
-	Port uint16
+	IP            netip.Addr
+	Port          uint16
+	PFGateway     netip.Addr
+	ForwardedPort uint16
 }
 type Runner interface {
 	Run(ctx context.Context, name string, args []string, stdin []byte) ([]byte, error)
@@ -92,7 +96,7 @@ func (m Manager) Apply(ctx context.Context, state State, endpoint Endpoint) erro
 }
 
 func Transaction(cfg Config, state State, endpoint Endpoint, ipv6 bool) (string, error) {
-	if cfg.ApplicationUID <= 0 || cfg.ServicePort == 0 || cfg.Interface == "" {
+	if cfg.ApplicationUID <= 0 || cfg.PFHelperUID <= 0 || cfg.PFHelperUID == cfg.ApplicationUID || cfg.ServicePort == 0 || cfg.Interface == "" {
 		return "", errors.New("invalid firewall configuration")
 	}
 	if state != Bootstrap && state != Selected && state != Verifying && state != Healthy && state != Locked {
@@ -100,6 +104,12 @@ func Transaction(cfg Config, state State, endpoint Endpoint, ipv6 bool) (string,
 	}
 	if (state == Selected || state == Verifying || state == Healthy) && (!endpoint.IP.IsValid() || endpoint.Port == 0) {
 		return "", errors.New("active state requires endpoint")
+	}
+	if state == Healthy && !endpoint.PFGateway.IsValid() {
+		return "", errors.New("healthy state requires PF gateway")
+	}
+	if state != Healthy && endpoint.ForwardedPort != 0 {
+		return "", errors.New("forwarded port requires healthy state")
 	}
 	var b strings.Builder
 	b.WriteString("*filter\n:INPUT DROP [0:0]\n:OUTPUT DROP [0:0]\n:FORWARD DROP [0:0]\n")
@@ -115,6 +125,10 @@ func Transaction(cfg Config, state State, endpoint Endpoint, ipv6 bool) (string,
 		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d ! -o %s -p tcp --sport %d -d %s -m conntrack --ctstate ESTABLISHED -j ACCEPT\n", cfg.ApplicationUID, cfg.Interface, cfg.ServicePort, subnet)
 	}
 	fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d ! -o %s -j DROP\n", cfg.ApplicationUID, cfg.Interface)
+	if state == Healthy && endpoint.PFGateway.Is6() == ipv6 {
+		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d -o %s -p tcp -d %s --dport %d -j ACCEPT\n", cfg.PFHelperUID, cfg.Interface, endpoint.PFGateway, PFAPIPort)
+	}
+	fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d -j DROP\n", cfg.PFHelperUID)
 	b.WriteString("-A PIA_RUNTIME_OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n")
 	for _, subnet := range cfg.AllowedSubnets {
 		if subnet.Addr().Is6() != ipv6 {
@@ -140,6 +154,10 @@ func Transaction(cfg Config, state State, endpoint Endpoint, ipv6 bool) (string,
 	}
 	if state == Healthy {
 		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d -o %s -j ACCEPT\n", cfg.ApplicationUID, cfg.Interface)
+		if endpoint.ForwardedPort != 0 && endpoint.PFGateway.Is6() == ipv6 {
+			fmt.Fprintf(&b, "-A PIA_RUNTIME_INPUT -i %s -p tcp --dport %d -m conntrack --ctstate NEW -j ACCEPT\n", cfg.Interface, endpoint.ForwardedPort)
+			fmt.Fprintf(&b, "-A PIA_RUNTIME_INPUT -i %s -p udp --dport %d -m conntrack --ctstate NEW -j ACCEPT\n", cfg.Interface, endpoint.ForwardedPort)
+		}
 	}
 	b.WriteString("-A PIA_RUNTIME_INPUT -j DROP\n-A PIA_RUNTIME_OUTPUT -j DROP\n-A PIA_RUNTIME_FORWARD -j DROP\nCOMMIT\n")
 	return b.String(), nil

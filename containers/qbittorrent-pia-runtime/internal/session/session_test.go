@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,7 +33,7 @@ func TestAtomicPublicationPermissionsAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checks := map[string]os.FileMode{"generation": 0o640, "region": 0o640, "endpoint": 0o640, "tls-hostname": 0o640, "wg-gateway": 0o640, "pf-gateway": 0o640, "pia.token": 0o640, "wg0.conf": 0o600, "pf/payload": 0o600, "pf/signature": 0o600, "pf/expires-at": 0o600}
+	checks := map[string]os.FileMode{"generation": 0o640, "region": 0o640, "endpoint": 0o640, "tls-hostname": 0o640, "wg-gateway": 0o640, "pf-gateway": 0o640, "pia.token": 0o640, "wg0.conf": 0o600, "pf/payload": 0o600, "pf/signature": 0o600, "pf/expires-at": 0o600, "pf/port": 0o600}
 	for name, want := range checks {
 		info, err := os.Stat(filepath.Join(dir, name))
 		if err != nil {
@@ -83,6 +84,71 @@ func TestAtomicPublicationPermissionsAndIsolation(t *testing.T) {
 	}
 	if !foundPFWriteOwner {
 		t.Fatal("PF files were not owned by helper identity before publication")
+	}
+}
+
+func TestForwardedPortPublicationValidation(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "pia")
+	publisher := Publisher{Root: root, ReaderGID: ReaderID, Owner: &fakeOwner{calls: map[string][2]int{}}}
+	if _, err := publisher.PublishCurrent(generation("gen-one")); err != nil {
+		t.Fatal(err)
+	}
+	portPath := filepath.Join(root, "sessions", "gen-one", "pf", "port")
+	if _, err := publisher.ReadForwardedPort("gen-one"); !errors.Is(err, ErrPFPortPending) {
+		t.Fatalf("empty PF port error=%v", err)
+	}
+	write := func(value string) {
+		t.Helper()
+		if err := os.WriteFile(portPath, []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(`{"generation":"gen-one","port":49152}`)
+	if port, err := publisher.ReadForwardedPort("gen-one"); err != nil || port != 49152 {
+		t.Fatalf("port=%d error=%v", port, err)
+	}
+	if err := os.Chmod(portPath, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publisher.ReadForwardedPort("gen-one"); !errors.Is(err, ErrPFPortInvalid) {
+		t.Fatalf("wrong-mode PF port error=%v", err)
+	}
+	if err := os.Chmod(portPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	write(`{"generation":"gen-old","port":49152}`)
+	if _, err := publisher.ReadForwardedPort("gen-one"); !errors.Is(err, ErrPFPortStale) {
+		t.Fatalf("stale PF port error=%v", err)
+	}
+	for _, value := range []string{
+		`{"generation":"gen-one","port":0}`,
+		`{"generation":"gen-one","port":65536}`,
+		`{"generation":"gen-one","port":49152,"command":"iptables"}`,
+		`not-json`,
+	} {
+		write(value)
+		if _, err := publisher.ReadForwardedPort("gen-one"); !errors.Is(err, ErrPFPortInvalid) {
+			t.Fatalf("invalid PF port %q error=%v", value, err)
+		}
+	}
+}
+
+func TestConfiguredPFHelperOwnsOnlyPFWritablePaths(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "pia")
+	owner := &fakeOwner{calls: map[string][2]int{}}
+	publisher := Publisher{Root: root, ReaderGID: ReaderID, PFHelperUID: 60000, Owner: owner}
+	dir, err := publisher.PublishCurrent(generation("gen-one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, ids := range owner.calls {
+		isPFPath := path == filepath.Join(dir, "pf") || strings.Contains(path, string(filepath.Separator)+"pf"+string(filepath.Separator))
+		if isPFPath && ids[0] != 60000 {
+			t.Fatalf("PF path %s owner=%v", path, ids)
+		}
+		if !isPFPath && ids[0] == 60000 {
+			t.Fatalf("PF helper owns non-PF path %s", path)
+		}
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -91,27 +92,83 @@ func (v *fakeVerifier) Verify(context.Context, netip.Addr) (health.Result, error
 	return health.Result{}, err
 }
 
-type fakeFirewall struct{ states []firewall.State }
+type fakeFirewall struct {
+	states      []firewall.State
+	endpoints   []firewall.Endpoint
+	initErr     error
+	applyErrors map[int]error
+	applyCalls  int
+	events      *[]string
+}
 
 func (f *fakeFirewall) Init(context.Context) error {
 	f.states = append(f.states, firewall.Bootstrap)
-	return nil
+	return f.initErr
 }
-func (f *fakeFirewall) Apply(_ context.Context, state firewall.State, _ firewall.Endpoint) error {
+func (f *fakeFirewall) Apply(_ context.Context, state firewall.State, endpoint firewall.Endpoint) error {
 	f.states = append(f.states, state)
-	return nil
+	f.endpoints = append(f.endpoints, endpoint)
+	if f.events != nil {
+		*f.events = append(*f.events, "firewall:"+string(state))
+	}
+	err := f.applyErrors[f.applyCalls]
+	f.applyCalls++
+	return err
 }
 
-type fakePublisher struct{ ready, invalidated, currentInvalidated, published int }
+type fakePublisher struct {
+	ready, invalidated, currentInvalidated, published int
+	pfPort                                            uint16
+	pfErr                                             error
+	publishCurrentErr                                 error
+	publishReadyErr                                   error
+	invalidateReadyErr                                error
+	invalidateCurrentErr                              error
+	removeErr                                         error
+	removed                                           int
+	events                                            *[]string
+	lastGeneration                                    session.Generation
+}
 
-func (p *fakePublisher) PublishCurrent(_ session.Generation) (string, error) {
+func (p *fakePublisher) PublishCurrent(generation session.Generation) (string, error) {
 	p.published++
-	return "/tmp/generation", nil
+	p.lastGeneration = generation
+	return "/tmp/generation", p.publishCurrentErr
 }
-func (p *fakePublisher) PublishReady(string) error { p.ready++; return nil }
-func (p *fakePublisher) InvalidateReady() error    { p.invalidated++; return nil }
-func (p *fakePublisher) InvalidateCurrent() error  { p.currentInvalidated++; return nil }
-func (p *fakePublisher) Remove(string) error       { return nil }
+func (p *fakePublisher) PublishReady(string) error {
+	p.ready++
+	if p.events != nil {
+		*p.events = append(*p.events, "publish-ready")
+	}
+	return p.publishReadyErr
+}
+func (p *fakePublisher) ReadForwardedPort(string) (uint16, error) {
+	if p.pfPort == 0 && p.pfErr == nil {
+		return 0, session.ErrPFPortPending
+	}
+	return p.pfPort, p.pfErr
+}
+func (p *fakePublisher) InvalidateReady() error {
+	p.invalidated++
+	if p.events != nil {
+		*p.events = append(*p.events, "invalidate-ready")
+	}
+	return p.invalidateReadyErr
+}
+func (p *fakePublisher) InvalidateCurrent() error {
+	p.currentInvalidated++
+	if p.events != nil {
+		*p.events = append(*p.events, "invalidate-current")
+	}
+	return p.invalidateCurrentErr
+}
+func (p *fakePublisher) Remove(string) error {
+	p.removed++
+	if p.events != nil {
+		*p.events = append(*p.events, "remove")
+	}
+	return p.removeErr
+}
 
 type bootstrapAPI struct {
 	cancel    context.CancelFunc
@@ -119,6 +176,27 @@ type bootstrapAPI struct {
 	probes    int
 	tokens    int
 	registers int
+}
+
+type cycleAPI struct{}
+
+func (cycleAPI) FetchServerList(context.Context) (api.ServerList, error) {
+	pf, offline := true, false
+	return api.ServerList{
+		Groups:  map[string][]api.Group{"wg": {{Name: "wireguard"}}},
+		Regions: []api.Region{{ID: "ca", Name: "Canada", Country: "CA", PortForward: &pf, Offline: &offline, Servers: api.Servers{WG: []api.Endpoint{{IP: "192.0.2.10", Hostname: "ca.example.invalid"}}}}},
+	}, nil
+}
+func (cycleAPI) Probe(context.Context, api.Candidate) error { return nil }
+func (cycleAPI) Token(context.Context, string, string) (string, error) {
+	return "token-fixture", nil
+}
+func (cycleAPI) Register(context.Context, api.Candidate, string, string) (wireguard.Registration, error) {
+	keys, err := wireguard.GenerateKeyPair()
+	if err != nil {
+		return wireguard.Registration{}, err
+	}
+	return wireguard.Registration{PeerIP: "10.0.0.2/32", ServerKey: keys.Public, ServerIP: "10.0.0.1", ServerPort: 1337, DNSServers: []string{"10.0.0.1"}}, nil
 }
 
 func (a *bootstrapAPI) FetchServerList(context.Context) (api.ServerList, error) {
@@ -166,8 +244,10 @@ func TestBootstrapPublicIPRetriesBeforeAnySessionActivity(t *testing.T) {
 		Status:    status,
 		PublicIP: func(context.Context, string, time.Duration) (netip.Addr, error) {
 			attempts++
-			if len(fw.states) != 1 || fw.states[0] != firewall.Bootstrap {
-				t.Fatalf("fail-closed firewall was not the only activity before bootstrap: %v", fw.states)
+			for _, state := range fw.states {
+				if state != firewall.Bootstrap {
+					t.Fatalf("fail-closed bootstrap firewall was not the only activity before bootstrap: %v", fw.states)
+				}
 			}
 			if client.fetches != 0 || client.probes != 0 || client.tokens != 0 || client.registers != 0 || publisher.published != 0 || process.starts != 0 {
 				t.Fatal("API, generation, or tunnel activity occurred before bootstrap succeeded")
@@ -203,10 +283,173 @@ func TestBootstrapPublicIPRetriesBeforeAnySessionActivity(t *testing.T) {
 	}
 }
 
-type fakeChild struct{ done chan error }
+func TestBootstrapFirewallFailureLocksWithoutPublicIPActivity(t *testing.T) {
+	fw := &fakeFirewall{applyErrors: map[int]error{0: errors.New("bootstrap firewall failed")}}
+	publicIPCalls := 0
+	s := Supervisor{
+		Config:   config.Config{ShutdownGrace: time.Second},
+		Firewall: fw,
+		Status:   health.NewStatus(),
+		PublicIP: func(context.Context, string, time.Duration) (netip.Addr, error) {
+			publicIPCalls++
+			return netip.MustParseAddr("198.51.100.1"), nil
+		},
+	}
+	if _, err := s.bootstrapPublicIP(context.Background()); err == nil || !strings.Contains(err.Error(), "bootstrap firewall failed") {
+		t.Fatalf("error=%v", err)
+	}
+	if strings.Join(firewallStates(fw.states), ",") != "BOOTSTRAP,LOCKED" || publicIPCalls != 0 || s.Status.Ready() {
+		t.Fatalf("states=%v public-IP calls=%d ready=%v", fw.states, publicIPCalls, s.Status.Ready())
+	}
+}
 
-func (c *fakeChild) Done() <-chan error       { return c.done }
-func (c *fakeChild) Stop(time.Duration) error { return nil }
+func TestNewSessionCycleRefreshesPreTunnelPublicIPAfterCleanup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fw := &fakeFirewall{}
+	publisher := &fakePublisher{}
+	process := &countingProcess{}
+	child := &fakeChild{done: make(chan error)}
+	publicIPs := []netip.Addr{netip.MustParseAddr("198.51.100.10"), netip.MustParseAddr("198.51.100.11")}
+	publicIPCalls := 0
+	var compared []netip.Addr
+	s := Supervisor{
+		Config:    config.Config{PublicIPURL: "https://example.invalid/ip", ProbeTimeout: time.Second, ShutdownGrace: time.Second},
+		API:       &bootstrapAPI{cancel: cancel},
+		Firewall:  fw,
+		Publisher: publisher,
+		Verifier:  &fakeVerifier{},
+		Process:   process,
+		Status:    health.NewStatus(),
+		PublicIP: func(context.Context, string, time.Duration) (netip.Addr, error) {
+			if publicIPCalls >= 1 && (child.stops != 1 || publisher.removed != 1 || len(compared) != 1) {
+				t.Fatalf("new bootstrap began before prior generation cleanup: stops=%d removals=%d", child.stops, publisher.removed)
+			}
+			publicIPCalls++
+			if publicIPCalls == 2 {
+				return netip.Addr{}, errors.New("transient refreshed public-IP failure")
+			}
+			if publicIPCalls == 1 {
+				return publicIPs[0], nil
+			}
+			return publicIPs[1], nil
+		},
+		Now:   func() time.Time { return time.Unix(0, 0) },
+		Sleep: func(context.Context, time.Duration) error { return nil },
+	}
+	s.cycle = func(_ context.Context, preTunnelIP netip.Addr) error {
+		compared = append(compared, preTunnelIP)
+		if len(compared) == 1 {
+			s.child = child
+			s.current = "gen-one"
+			return errors.New("rotate session")
+		}
+		cancel()
+		return ctx.Err()
+	}
+	if err := s.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if publicIPCalls != 3 || len(compared) != 2 || compared[0] != publicIPs[0] || compared[1] != publicIPs[1] {
+		t.Fatalf("public-IP calls=%d comparison values=%v", publicIPCalls, compared)
+	}
+	if strings.Join(firewallStates(fw.states[:4]), ",") != "BOOTSTRAP,BOOTSTRAP,LOCKED,BOOTSTRAP" {
+		t.Fatalf("firewall sequence=%v", fw.states)
+	}
+}
+
+func TestCyclePublicationAndFirewallFailuresPropagate(t *testing.T) {
+	newSupervisor := func(fw *fakeFirewall, publisher *fakePublisher) *Supervisor {
+		return &Supervisor{
+			Config:    config.Config{CandidateMax: 1},
+			API:       cycleAPI{},
+			Firewall:  fw,
+			Publisher: publisher,
+			Verifier:  &fakeVerifier{},
+			Process:   &countingProcess{},
+			Status:    health.NewStatus(),
+			Now:       func() time.Time { return time.Unix(1, 0) },
+			cooldown:  map[string]time.Time{},
+		}
+	}
+	t.Run("current generation publication", func(t *testing.T) {
+		publisher := &fakePublisher{publishCurrentErr: errors.New("publish current failed")}
+		err := newSupervisor(&fakeFirewall{}, publisher).runCycle(context.Background(), netip.MustParseAddr("198.51.100.1"))
+		if err == nil || !strings.Contains(err.Error(), "publish current failed") || publisher.published != 1 || publisher.lastGeneration.PFGateway != "10.0.0.1" {
+			t.Fatalf("error=%v publications=%d PF gateway=%q", err, publisher.published, publisher.lastGeneration.PFGateway)
+		}
+	})
+	for _, tc := range []struct {
+		name      string
+		failCall  int
+		wantState firewall.State
+	}{
+		{name: "selection bootstrap", failCall: 0, wantState: firewall.Bootstrap},
+		{name: "candidate bootstrap", failCall: 1, wantState: firewall.Bootstrap},
+		{name: "registration endpoint", failCall: 2, wantState: firewall.Selected},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fw := &fakeFirewall{applyErrors: map[int]error{tc.failCall: errors.New("firewall failed")}}
+			publisher := &fakePublisher{}
+			err := newSupervisor(fw, publisher).runCycle(context.Background(), netip.MustParseAddr("198.51.100.1"))
+			if err == nil || !strings.Contains(err.Error(), "firewall failed") || fw.states[tc.failCall] != tc.wantState {
+				t.Fatalf("error=%v states=%v", err, fw.states)
+			}
+		})
+	}
+}
+
+func TestInitialVerificationFirewallFailureLocksBeforeChildStart(t *testing.T) {
+	fw := &fakeFirewall{applyErrors: map[int]error{0: errors.New("verifying failed")}}
+	process := &countingProcess{}
+	s := Supervisor{
+		Config:    config.Config{ShutdownGrace: time.Second},
+		Firewall:  fw,
+		Publisher: &fakePublisher{},
+		Verifier:  &fakeVerifier{},
+		Process:   process,
+		Status:    health.NewStatus(),
+	}
+	err := s.startAndVerify(context.Background(), "/run/pia/sessions/gen-one", "10.0.0.1", activeEndpoint(), netip.MustParseAddr("198.51.100.1"))
+	if err == nil || !strings.Contains(err.Error(), "verifying failed") {
+		t.Fatalf("error=%v", err)
+	}
+	if strings.Join(firewallStates(fw.states), ",") != "VERIFYING,LOCKED" || process.starts != 0 {
+		t.Fatalf("states=%v child starts=%d", fw.states, process.starts)
+	}
+}
+
+func TestFirewallInitFailureMarksSupervisorNotLive(t *testing.T) {
+	status := health.NewStatus()
+	s := Supervisor{
+		Config:    config.Config{},
+		API:       &bootstrapAPI{},
+		Firewall:  &fakeFirewall{initErr: errors.New("init failed")},
+		Publisher: &fakePublisher{},
+		Verifier:  &fakeVerifier{},
+		Process:   &countingProcess{},
+		Status:    status,
+	}
+	if err := s.Run(context.Background()); err == nil || status.Live(time.Minute) || status.Ready() {
+		t.Fatalf("error=%v live=%v ready=%v", err, status.Live(time.Minute), status.Ready())
+	}
+}
+
+type fakeChild struct {
+	done    chan error
+	stops   int
+	stopErr error
+	events  *[]string
+}
+
+func (c *fakeChild) Done() <-chan error { return c.done }
+func (c *fakeChild) Stop(time.Duration) error {
+	c.stops++
+	if c.events != nil {
+		*c.events = append(*c.events, "stop-child")
+	}
+	return c.stopErr
+}
 
 func TestHealthThresholdRevokesBeforeFailover(t *testing.T) {
 	verifier := &fakeVerifier{errors: []error{errors.New("one"), errors.New("two"), errors.New("three"), errors.New("four")}}
@@ -225,6 +468,189 @@ func TestHealthThresholdRevokesBeforeFailover(t *testing.T) {
 	if len(fw.states) == 0 || fw.states[0] != firewall.Verifying {
 		t.Fatalf("firewall states=%v", fw.states)
 	}
+}
+
+func activeEndpoint() firewall.Endpoint {
+	return firewall.Endpoint{IP: netip.MustParseAddr("192.0.2.10"), Port: 1337, PFGateway: netip.MustParseAddr("192.0.2.20")}
+}
+
+func TestPFPortSynchronizationAndHealthFailureRemoval(t *testing.T) {
+	fw := &fakeFirewall{}
+	publisher := &fakePublisher{pfPort: 49152}
+	status := health.NewStatus()
+	status.Set(string(StateHealthy), true)
+	s := Supervisor{Firewall: fw, Publisher: publisher, Status: status, current: "gen-one"}
+	if err := s.syncForwardedPort(context.Background(), activeEndpoint()); err != nil {
+		t.Fatal(err)
+	}
+	if s.pfPort != 49152 || len(fw.endpoints) != 1 || fw.endpoints[0].ForwardedPort != 49152 || fw.states[0] != firewall.Healthy {
+		t.Fatalf("PF port=%d states=%v endpoints=%+v", s.pfPort, fw.states, fw.endpoints)
+	}
+	if err := s.restrictForVerification(context.Background(), activeEndpoint()); err != nil {
+		t.Fatal(err)
+	}
+	if s.pfPort != 0 || status.Ready() || fw.states[len(fw.states)-1] != firewall.Verifying || fw.endpoints[len(fw.endpoints)-1].ForwardedPort != 0 || publisher.invalidated != 1 {
+		t.Fatalf("PF allowance was not removed: port=%d ready=%v states=%v endpoints=%+v invalidated=%d", s.pfPort, status.Ready(), fw.states, fw.endpoints, publisher.invalidated)
+	}
+
+	s.pfPort = 49152
+	publisher.pfPort = 0
+	publisher.pfErr = session.ErrPFPortPending
+	if err := s.syncForwardedPort(context.Background(), activeEndpoint()); err != nil || s.pfPort != 0 || fw.endpoints[len(fw.endpoints)-1].ForwardedPort != 0 {
+		t.Fatalf("unpublished PF port error=%v port=%d", err, s.pfPort)
+	}
+
+	s.pfPort = 49152
+	publisher.pfErr = session.ErrPFPortStale
+	if err := s.syncForwardedPort(context.Background(), activeEndpoint()); !errors.Is(err, session.ErrPFPortStale) {
+		t.Fatalf("stale generation error=%v", err)
+	}
+	if s.pfPort != 0 || fw.endpoints[len(fw.endpoints)-1].ForwardedPort != 0 {
+		t.Fatal("stale PF data did not revoke the inbound allowance")
+	}
+}
+
+func TestPFPortFirewallFailuresLockAndStop(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		activePort uint16
+		published  uint16
+		publishErr error
+	}{
+		{name: "install", published: 49152},
+		{name: "revoke invalid", activePort: 49152, publishErr: session.ErrPFPortStale},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fw := &fakeFirewall{applyErrors: map[int]error{0: errors.New("PF firewall failed")}}
+			publisher := &fakePublisher{pfPort: tc.published, pfErr: tc.publishErr}
+			child := &fakeChild{done: make(chan error)}
+			s := Supervisor{
+				Config:    config.Config{ShutdownGrace: time.Second},
+				Firewall:  fw,
+				Publisher: publisher,
+				Status:    health.NewStatus(),
+				child:     child,
+				current:   "gen-one",
+				pfPort:    tc.activePort,
+			}
+			if err := s.syncForwardedPort(context.Background(), activeEndpoint()); err == nil || !strings.Contains(err.Error(), "PF firewall failed") {
+				t.Fatalf("error=%v", err)
+			}
+			if strings.Join(firewallStates(fw.states), ",") != "HEALTHY,LOCKED" || child.stops != 1 || s.pfPort != 0 {
+				t.Fatalf("states=%v stops=%d PF port=%d", fw.states, child.stops, s.pfPort)
+			}
+		})
+	}
+}
+
+func TestReadyPromotionFirewallBeforeMetadataAndFailureRollback(t *testing.T) {
+	t.Run("healthy firewall precedes ready metadata", func(t *testing.T) {
+		var events []string
+		fw := &fakeFirewall{events: &events}
+		publisher := &fakePublisher{events: &events}
+		status := health.NewStatus()
+		s := Supervisor{Firewall: fw, Publisher: publisher, Status: status, current: "gen-one"}
+		if err := s.promoteReady(context.Background(), activeEndpoint()); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(events, ",") != "firewall:HEALTHY,publish-ready" || !status.Ready() {
+			t.Fatalf("events=%v ready=%v", events, status.Ready())
+		}
+	})
+	t.Run("ready publication failure reverts firewall", func(t *testing.T) {
+		var events []string
+		fw := &fakeFirewall{events: &events}
+		publisher := &fakePublisher{publishReadyErr: errors.New("publish failed"), events: &events}
+		status := health.NewStatus()
+		s := Supervisor{Firewall: fw, Publisher: publisher, Status: status, current: "gen-one"}
+		if err := s.promoteReady(context.Background(), activeEndpoint()); err == nil {
+			t.Fatal("ready publication failure was ignored")
+		}
+		if strings.Join(events, ",") != "firewall:HEALTHY,publish-ready,firewall:VERIFYING" || status.Ready() {
+			t.Fatalf("events=%v ready=%v", events, status.Ready())
+		}
+	})
+	t.Run("healthy firewall failure locks and stops", func(t *testing.T) {
+		fw := &fakeFirewall{applyErrors: map[int]error{0: errors.New("healthy failed")}}
+		publisher := &fakePublisher{}
+		child := &fakeChild{done: make(chan error)}
+		s := Supervisor{Config: config.Config{ShutdownGrace: time.Second}, Firewall: fw, Publisher: publisher, Status: health.NewStatus(), child: child, current: "gen-one"}
+		if err := s.promoteReady(context.Background(), activeEndpoint()); err == nil {
+			t.Fatal("healthy firewall failure was ignored")
+		}
+		if strings.Join(firewallStates(fw.states), ",") != "HEALTHY,LOCKED" || child.stops != 1 || publisher.ready != 0 {
+			t.Fatalf("states=%v stops=%d ready publications=%d", fw.states, child.stops, publisher.ready)
+		}
+	})
+	t.Run("rollback failure locks and stops", func(t *testing.T) {
+		fw := &fakeFirewall{applyErrors: map[int]error{1: errors.New("verifying failed")}}
+		publisher := &fakePublisher{publishReadyErr: errors.New("publish failed")}
+		child := &fakeChild{done: make(chan error)}
+		s := Supervisor{Config: config.Config{ShutdownGrace: time.Second}, Firewall: fw, Publisher: publisher, Status: health.NewStatus(), child: child, current: "gen-one"}
+		if err := s.promoteReady(context.Background(), activeEndpoint()); err == nil {
+			t.Fatal("rollback failure was ignored")
+		}
+		if strings.Join(firewallStates(fw.states), ",") != "HEALTHY,VERIFYING,LOCKED" || child.stops != 1 {
+			t.Fatalf("states=%v stops=%d", fw.states, child.stops)
+		}
+	})
+}
+
+func TestHealthRestrictionInjectedFailuresAreFailClosed(t *testing.T) {
+	t.Run("restricted firewall failure locks and stops before metadata", func(t *testing.T) {
+		var events []string
+		fw := &fakeFirewall{applyErrors: map[int]error{0: errors.New("verifying failed")}, events: &events}
+		publisher := &fakePublisher{events: &events}
+		child := &fakeChild{done: make(chan error), events: &events}
+		status := health.NewStatus()
+		status.Set(string(StateHealthy), true)
+		s := Supervisor{Config: config.Config{ShutdownGrace: time.Second}, Firewall: fw, Publisher: publisher, Status: status, child: child, current: "gen-one", pfPort: 49152}
+		if err := s.restrictForVerification(context.Background(), activeEndpoint()); err == nil {
+			t.Fatal("restricted firewall failure was ignored")
+		}
+		if strings.Join(events, ",") != "firewall:VERIFYING,firewall:LOCKED,stop-child" || status.Ready() || publisher.invalidated != 0 || s.pfPort != 0 {
+			t.Fatalf("events=%v ready=%v invalidated=%d port=%d", events, status.Ready(), publisher.invalidated, s.pfPort)
+		}
+	})
+	t.Run("ready invalidation failure propagates", func(t *testing.T) {
+		fw := &fakeFirewall{}
+		publisher := &fakePublisher{invalidateReadyErr: errors.New("invalidate failed")}
+		status := health.NewStatus()
+		status.Set(string(StateHealthy), true)
+		s := Supervisor{Firewall: fw, Publisher: publisher, Status: status, current: "gen-one"}
+		if err := s.restrictForVerification(context.Background(), activeEndpoint()); err == nil || status.Ready() {
+			t.Fatalf("error=%v ready=%v", err, status.Ready())
+		}
+	})
+}
+
+func TestFailoverAndShutdownSurfaceAllSecurityErrors(t *testing.T) {
+	for _, state := range []State{StateFailingOver, StateShuttingDown} {
+		t.Run(string(state), func(t *testing.T) {
+			var events []string
+			fw := &fakeFirewall{applyErrors: map[int]error{0: errors.New("lock failed")}, events: &events}
+			publisher := &fakePublisher{invalidateReadyErr: errors.New("ready failed"), invalidateCurrentErr: errors.New("current failed"), removeErr: errors.New("remove failed"), events: &events}
+			child := &fakeChild{done: make(chan error), stopErr: errors.New("stop failed"), events: &events}
+			s := Supervisor{Config: config.Config{ShutdownGrace: time.Second}, Firewall: fw, Publisher: publisher, Status: health.NewStatus(), child: child, current: "gen-one", pfPort: 49152}
+			err := s.deactivate(state)
+			for _, message := range []string{"lock failed", "ready failed", "current failed", "stop failed", "remove failed"} {
+				if err == nil || !strings.Contains(err.Error(), message) {
+					t.Fatalf("missing %q in %v", message, err)
+				}
+			}
+			if strings.Join(events, ",") != "firewall:LOCKED,stop-child,invalidate-ready,invalidate-current,remove" || s.pfPort != 0 || !s.cleanupRequired {
+				t.Fatalf("events=%v port=%d cleanup=%v", events, s.pfPort, s.cleanupRequired)
+			}
+		})
+	}
+}
+
+func firewallStates(states []firewall.State) []string {
+	out := make([]string, len(states))
+	for i, state := range states {
+		out[i] = string(state)
+	}
+	return out
 }
 
 func TestProactiveRotation(t *testing.T) {
@@ -254,27 +680,69 @@ func TestLogDoesNotContainRepresentativeSecrets(t *testing.T) {
 	}
 }
 
-func TestOSProcessGracefulStopAndKillFallback(t *testing.T) {
-	graceful := script(t, "trap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n")
-	child, err := (OSProcess{}).Start(graceful, os.Environ())
-	if err != nil {
-		t.Fatal(err)
+func TestOSProcessStopCompletionAndSignals(t *testing.T) {
+	start := func(body string) *osChild {
+		t.Helper()
+		child, err := (OSProcess{}).Start(script(t, body), os.Environ())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return child.(*osChild)
 	}
-	time.Sleep(25 * time.Millisecond)
-	if err := child.Stop(time.Second); err != nil {
-		t.Fatalf("graceful stop: %v", err)
-	}
-	stubborn := script(t, "trap '' TERM INT\nwhile :; do sleep 1; done\n")
-	child, err = (OSProcess{}).Start(stubborn, os.Environ())
-	if err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(25 * time.Millisecond)
-	started := time.Now()
-	_ = child.Stop(50 * time.Millisecond)
-	if time.Since(started) > time.Second {
-		t.Fatal("SIGKILL fallback was not bounded")
-	}
+	t.Run("child exits before Stop without a post-reap signal", func(t *testing.T) {
+		child := start("exit 0\n")
+		<-child.waitDone
+		signals := 0
+		child.signalFn = func(syscall.Signal) error { signals++; return errors.New("post-reap signal") }
+		if err := child.Stop(time.Second); err != nil || signals != 0 {
+			t.Fatalf("stop error=%v signals=%d", err, signals)
+		}
+	})
+	t.Run("Done consumed before Stop", func(t *testing.T) {
+		child := start("exit 0\n")
+		if err := <-child.Done(); err != nil {
+			t.Fatal(err)
+		}
+		signals := 0
+		child.signalFn = func(syscall.Signal) error { signals++; return errors.New("post-reap signal") }
+		if err := child.Stop(time.Second); err != nil || signals != 0 {
+			t.Fatalf("stop error=%v signals=%d", err, signals)
+		}
+	})
+	t.Run("repeated Stop sends one graceful signal", func(t *testing.T) {
+		child := start("trap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n")
+		time.Sleep(25 * time.Millisecond)
+		original := child.signalFn
+		signals := 0
+		child.signalFn = func(signal syscall.Signal) error { signals++; return original(signal) }
+		if err := child.Stop(time.Second); err != nil {
+			t.Fatal(err)
+		}
+		if err := child.Stop(time.Second); err != nil || signals != 1 {
+			t.Fatalf("repeated stop error=%v signals=%d", err, signals)
+		}
+	})
+	t.Run("SIGKILL is bounded and only sent while running", func(t *testing.T) {
+		child := start("trap '' TERM INT\nwhile :; do sleep 1; done\n")
+		time.Sleep(25 * time.Millisecond)
+		original := child.signalFn
+		var signals []syscall.Signal
+		child.signalFn = func(signal syscall.Signal) error {
+			signals = append(signals, signal)
+			if signal == syscall.SIGTERM {
+				return nil
+			}
+			return original(signal)
+		}
+		started := time.Now()
+		err := child.Stop(50 * time.Millisecond)
+		if time.Since(started) > time.Second || len(signals) != 2 || signals[0] != syscall.SIGTERM || signals[1] != syscall.SIGKILL {
+			t.Fatalf("duration=%s signals=%v error=%v", time.Since(started), signals, err)
+		}
+		if err != nil {
+			t.Fatalf("expected SIGKILL fallback returned %v", err)
+		}
+	})
 }
 
 func script(t *testing.T, body string) string {

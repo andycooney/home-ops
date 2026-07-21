@@ -10,12 +10,13 @@ The image is intentionally not wired into Kubernetes in this PR. PR 2 must suppl
 - `pia-runtime supervise` runs the state machine, HTTP probes, firewall transitions, and Gluetun child.
 - `pia-runtime self-test` performs offline binary and fixture checks without credentials or firewall changes.
 - `pia-runtime healthcheck` checks supervisor liveness only. Recoverable PIA failures remain live but not ready.
+- `pia-runtime readycheck` checks the separate local readiness endpoint for an exec-compatible Kubernetes probe.
 
-HTTP probe paths are `/live` and `/ready` on `0.0.0.0:8001` by default.
+HTTP probe paths are `/live` and `/ready` on `0.0.0.0:8001` by default. The check commands use only `127.0.0.1:8001`, reject redirects, and have a two-second timeout. PR 2 must use exec probes; the firewall does not expose port 8001 for remote probing.
 
 ## Required runtime contract
 
-The supervisor runs as root with the network-administration capabilities needed for iptables and WireGuard. `/dev/net/tun` must be available. `/run/pia` must be a tmpfs; startup fails before contacting PIA when it is not. UID `1000` is the application identity and GID `65532` is the session/PF reader identity unless explicitly configured otherwise.
+The supervisor runs as root with the network-administration capabilities needed for iptables and WireGuard. `/dev/net/tun` must be available. `/run/pia` must be a tmpfs; startup fails before contacting PIA when it is not. UID `1000` is the application identity, UID `65532` is the unprivileged PF helper, and GID `65532` is the session/PF reader identity unless explicitly configured otherwise. The PF helper does not need `NET_ADMIN`.
 
 Required secret environment values are `PIA_USERNAME` and `PIA_PASSWORD`. The existing `VPN_PORT_FORWARDING_USERNAME` and `VPN_PORT_FORWARDING_PASSWORD` names are accepted as migration inputs. They are removed from the Gluetun child environment.
 
@@ -25,6 +26,7 @@ Useful non-secret settings:
 |---|---:|---|
 | `PIA_PREFERRED_REGIONS` | empty | Ordered comma-separated PIA region IDs |
 | `PIA_ALLOWED_SUBNETS` | empty | Explicit non-WAN CIDRs required by the pod contract |
+| `PIA_PF_HELPER_UID` | `65532` | Unprivileged PF helper identity |
 | `PIA_CANDIDATE_MIN` / `PIA_CANDIDATE_MAX` | `3` / `6` | Validated candidate-cycle bounds |
 | `PIA_TUNNEL_TIMEOUT` | `120s` | Maximum startup verification window |
 | `PIA_HEALTH_INTERVAL` | `15s` | Independent health interval |
@@ -34,6 +36,8 @@ Useful non-secret settings:
 | `PIA_SHUTDOWN_GRACE` | `10s` | Child SIGTERM grace period |
 
 All durations and bounds are validated. Public or default-route CIDRs such as `0.0.0.0/0` are rejected as allowed subnets.
+
+The helper atomically publishes `{"generation":"<active-generation>","port":<1..65535>}` to the active generation's `pf/port` file with mode `0600`. The supervisor rejects stale, malformed, unknown-field, wrong-mode, and out-of-range data. Only the supervisor converts an accepted record into firewall rules; helper-provided commands are never executed.
 
 ## Development
 
