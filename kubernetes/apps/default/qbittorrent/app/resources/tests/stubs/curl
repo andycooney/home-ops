@@ -1,0 +1,33 @@
+#!/usr/bin/env sh
+set -eu
+
+printf '%s\n' "$*" >> "${CURL_LOG:?}"
+
+case "$*" in
+  *getSignature*)
+    if [ -n "${SWITCH_READY_ON_SIGNATURE:-}" ]; then
+      ln -sfn "sessions/${SWITCH_READY_ON_SIGNATURE}" "${READY_LINK_FOR_TEST:?}"
+    fi
+    if [ -n "${TEST_SIGNATURE_RESPONSE:-}" ]; then
+      printf '%s\n' "${TEST_SIGNATURE_RESPONSE}"
+    else
+      printf '%s\n' '{"status":"ERROR"}'
+    fi
+    ;;
+  *bindPort*)
+    if [ -n "${TEST_BIND_RESPONSE:-}" ]; then
+      printf '%s\n' "${TEST_BIND_RESPONSE}"
+    else
+      printf '%s\n' '{"status":"OK"}'
+    fi
+    ;;
+  *setPreferences*)
+    printf '%s\n' '{}'
+    ;;
+  *preferences*)
+    printf '{"listen_port":%s}\n' "${TEST_QBIT_CURRENT:-40000}"
+    ;;
+  *)
+    exit 1
+    ;;
+esac
