@@ -101,8 +101,11 @@ func ParseServerList(r io.Reader) (ServerList, error) {
 		return ServerList{}, errors.New("unknown or incomplete server metadata schema")
 	}
 	for _, region := range list.Regions {
-		if region.ID == "" || region.Name == "" || len(region.Country) != 2 || region.PortForward == nil || region.Offline == nil || region.Servers.WG == nil {
+		if region.ID == "" || region.Name == "" || len(region.Country) != 2 || region.PortForward == nil || region.Offline == nil {
 			return ServerList{}, errors.New("unknown or incomplete server metadata schema")
+		}
+		if !*region.Offline && region.Servers.WG == nil {
+			return ServerList{}, errors.New("online region missing WireGuard endpoints")
 		}
 		for _, endpoint := range region.Servers.WG {
 			if endpoint.IP == "" || endpoint.Hostname == "" {
