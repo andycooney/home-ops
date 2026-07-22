@@ -108,7 +108,7 @@ run_sync() {
     sh "${sync_script}" >"${stdout}" 2>"${stderr}"
 }
 
-payload_json='{"port":49152,"expires_at":"2099-01-01T00:00:00Z"}'
+payload_json='{"port":49152,"expires_at":"2099-01-01T00:00:00.123456789Z"}'
 payload="$(printf '%s' "${payload_json}" | base64 | tr -d '\n')"
 signature='fixture-signature-never-log'
 signature_response="$(jq -cn --arg payload "${payload}" --arg signature "${signature}" '{status:"OK",payload:$payload,signature:$signature}')"
@@ -125,7 +125,7 @@ pf_dir="${runtime}/sessions/gen-one/pf"
 [ "$(cat "${pf_dir}/port")" = '{"generation":"gen-one","port":49152}' ] || fail 'PF port record is not strict generation JSON'
 [ "$(cat "${pf_dir}/payload")" = "${payload}" ] || fail 'payload publication failed'
 [ "$(cat "${pf_dir}/signature")" = "${signature}" ] || fail 'signature publication failed'
-[ "$(cat "${pf_dir}/expires-at")" = '2099-01-01T00:00:00Z' ] || fail 'expiry publication failed'
+[ "$(cat "${pf_dir}/expires-at")" = '2099-01-01T00:00:00.123456789Z' ] || fail 'fractional expiry publication failed'
 for file in payload signature expires-at port; do
   [ "$(file_mode "${pf_dir}/${file}")" = 600 ] || fail "${file} mode is not 0600"
 done

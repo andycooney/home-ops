@@ -149,7 +149,7 @@ validate_allocation_values() {
   decoded="$(printf '%s' "${PAYLOAD}" | base64 -d 2>/dev/null)" || return 1
   decoded_port="$(printf '%s' "${decoded}" | jq -er '.port | select(type == "number" and floor == . and . >= 1 and . <= 65535)')" || return 1
   decoded_expiry="$(printf '%s' "${decoded}" | jq -er '.expires_at | select(type == "string" and length > 0)')" || return 1
-  expiry_epoch="$(jq -nr --arg expires "${decoded_expiry}" '$expires | fromdateiso8601')" || return 1
+  expiry_epoch="$(jq -nr --arg expires "${decoded_expiry}" '$expires | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601')" || return 1
   now_epoch="$(date +%s)"
   [ "${expiry_epoch}" -gt "${now_epoch}" ] || return 1
 
