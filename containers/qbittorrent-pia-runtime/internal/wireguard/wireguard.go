@@ -20,6 +20,7 @@ type Registration struct {
 	PeerIP     string
 	ServerKey  string
 	ServerIP   string
+	ServerVIP  string
 	ServerPort uint16
 	DNSServers []string
 }
@@ -35,7 +36,7 @@ func GenerateKeyPair() (KeyPair, error) {
 	}, nil
 }
 
-func BuildConfig(keys KeyPair, endpointIP string, registration Registration) (string, error) {
+func BuildConfig(keys KeyPair, registration Registration) (string, error) {
 	if err := validateKey(keys.Private); err != nil {
 		return "", fmt.Errorf("private key: %w", err)
 	}
@@ -45,9 +46,9 @@ func BuildConfig(keys KeyPair, endpointIP string, registration Registration) (st
 	if _, err := netip.ParsePrefix(registration.PeerIP); err != nil {
 		return "", fmt.Errorf("peer address: %w", err)
 	}
-	endpoint, err := netip.ParseAddr(endpointIP)
+	endpoint, err := netip.ParseAddr(registration.ServerIP)
 	if err != nil {
-		return "", fmt.Errorf("endpoint: %w", err)
+		return "", fmt.Errorf("server endpoint: %w", err)
 	}
 	if registration.ServerPort == 0 {
 		return "", errors.New("server port is zero")

@@ -183,6 +183,8 @@ type cycleAPI struct{}
 
 type candidateListAPI struct{ count int }
 
+type refreshingListAPI struct{ fetches int }
+
 type classifiedAPI struct {
 	count          int
 	events         []string
@@ -229,6 +231,34 @@ func (a candidateListAPI) FetchServerList(context.Context) (api.ServerList, erro
 		Regions: []api.Region{{ID: "ca", Name: "Canada", Country: "CA", PortForward: &pf, Offline: &offline, Servers: api.Servers{WG: endpoints}}},
 	}, nil
 }
+
+func (a *refreshingListAPI) FetchServerList(context.Context) (api.ServerList, error) {
+	a.fetches++
+	base := 1
+	if a.fetches > 1 {
+		base = 3
+	}
+	pf, offline := true, false
+	return api.ServerList{
+		Groups: map[string][]api.Group{"wg": {{Name: "wireguard"}}},
+		Regions: []api.Region{{
+			ID: "ca", Name: "Canada", Country: "CA", PortForward: &pf, Offline: &offline,
+			Servers: api.Servers{WG: []api.Endpoint{
+				{IP: fmt.Sprintf("192.0.2.%d", base), Hostname: fmt.Sprintf("ca-%d.example.invalid", base)},
+				{IP: fmt.Sprintf("192.0.2.%d", base+1), Hostname: fmt.Sprintf("ca-%d.example.invalid", base+1)},
+			}},
+		}},
+	}, nil
+}
+func (*refreshingListAPI) Probe(context.Context, api.Candidate) error {
+	return errors.New("unexpected probe outside injected attempt")
+}
+func (*refreshingListAPI) Token(context.Context, string, string) (string, error) {
+	return "", errors.New("unexpected token outside injected attempt")
+}
+func (*refreshingListAPI) Register(context.Context, api.Candidate, string, string) (wireguard.Registration, error) {
+	return wireguard.Registration{}, errors.New("unexpected registration outside injected attempt")
+}
 func (candidateListAPI) Probe(context.Context, api.Candidate) error {
 	return errors.New("unexpected probe outside candidate attempt")
 }
@@ -255,7 +285,7 @@ func (cycleAPI) Register(context.Context, api.Candidate, string, string) (wiregu
 	if err != nil {
 		return wireguard.Registration{}, err
 	}
-	return wireguard.Registration{PeerIP: "10.0.0.2/32", ServerKey: keys.Public, ServerIP: "10.0.0.1", ServerPort: 1337, DNSServers: []string{"10.0.0.1"}}, nil
+	return wireguard.Registration{PeerIP: "10.0.0.2/32", ServerKey: keys.Public, ServerIP: "192.0.2.20", ServerVIP: "10.0.0.1", ServerPort: 1337, DNSServers: []string{"10.0.0.1"}}, nil
 }
 
 func (a *bootstrapAPI) FetchServerList(context.Context) (api.ServerList, error) {
@@ -427,6 +457,69 @@ func TestNewSessionCycleRefreshesPreTunnelPublicIPAfterCleanup(t *testing.T) {
 	}
 	if strings.Join(firewallStates(fw.states[:4]), ",") != "BOOTSTRAP,BOOTSTRAP,LOCKED,BOOTSTRAP" {
 		t.Fatalf("firewall sequence=%v", fw.states)
+	}
+}
+
+func TestEstablishedEndpointLossRefreshesServerListWithoutOuterBackoff(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	now := time.Unix(100, 0)
+	client := &refreshingListAPI{}
+	fw := &fakeFirewall{}
+	publisher := &fakePublisher{}
+	child := &fakeChild{done: make(chan error)}
+	publicIPCalls := 0
+	outerSleeps := 0
+	var attempted []string
+	s := Supervisor{
+		Config: config.Config{
+			CandidateMin:  1,
+			CandidateMax:  2,
+			PublicIPURL:   "https://example.invalid/ip",
+			ProbeTimeout:  time.Second,
+			ShutdownGrace: time.Second,
+		},
+		API:       client,
+		Firewall:  fw,
+		Publisher: publisher,
+		Verifier:  &fakeVerifier{},
+		Process:   &countingProcess{},
+		Status:    health.NewStatus(),
+		PublicIP: func(context.Context, string, time.Duration) (netip.Addr, error) {
+			publicIPCalls++
+			return netip.MustParseAddr(fmt.Sprintf("198.51.100.%d", publicIPCalls)), nil
+		},
+		Now: func() time.Time { return now },
+		Sleep: func(context.Context, time.Duration) error {
+			outerSleeps++
+			return nil
+		},
+		cooldown: map[string]time.Time{},
+	}
+	s.attempt = func(_ context.Context, candidate api.Candidate, _ netip.Addr) error {
+		attempted = append(attempted, candidate.IP)
+		if len(attempted) == 1 {
+			s.child = child
+			s.current = "failed-generation"
+			return refreshFailure(errors.New("established endpoint stopped passing health checks"))
+		}
+		cancel()
+		return ctx.Err()
+	}
+	if err := s.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(attempted, ",") != "192.0.2.1,192.0.2.3" {
+		t.Fatalf("attempted stale candidate snapshot: %v", attempted)
+	}
+	if client.fetches != 2 || publicIPCalls != 2 || outerSleeps != 0 {
+		t.Fatalf("fetches=%d public-IP calls=%d outer sleeps=%d", client.fetches, publicIPCalls, outerSleeps)
+	}
+	if child.stops != 1 || publisher.removed != 1 || s.child != nil || s.current != "" {
+		t.Fatalf("stops=%d removals=%d child=%v current=%q", child.stops, publisher.removed, s.child, s.current)
+	}
+	if until := s.cooldown["192.0.2.1"]; !until.After(now) {
+		t.Fatalf("failed candidate was not cooled: %v", s.cooldown)
 	}
 }
 
@@ -670,7 +763,7 @@ func TestAuthenticationFailureRemainsClassifiedAndUsesConfiguredRetry(t *testing
 	}
 }
 
-func TestTunnelVerificationAndEstablishedHealthFailuresAreCandidateSpecific(t *testing.T) {
+func TestTunnelVerificationAndEstablishedHealthFailureClassification(t *testing.T) {
 	t.Run("verification timeout", func(t *testing.T) {
 		process := &startedProcess{}
 		nowCalls := 0
@@ -691,7 +784,7 @@ func TestTunnelVerificationAndEstablishedHealthFailuresAreCandidateSpecific(t *t
 			child: &fakeChild{done: make(chan error)}, current: "gen", Now: func() time.Time { return time.Unix(1, 0) }, Sleep: func(context.Context, time.Duration) error { return nil },
 		}
 		err := s.monitorHealthy(context.Background(), api.Candidate{RegionID: "ca"}, activeEndpoint(), netip.MustParseAddr("198.51.100.1"))
-		if err == nil || classifyFailure(err) != failureCandidate {
+		if err == nil || classifyFailure(err) != failureRefresh {
 			t.Fatalf("error=%v class=%v", err, classifyFailure(err))
 		}
 	})
@@ -714,9 +807,26 @@ func TestCyclePublicationAndFirewallFailuresPropagate(t *testing.T) {
 	t.Run("current generation publication", func(t *testing.T) {
 		publisher := &fakePublisher{publishCurrentErr: errors.New("publish current failed")}
 		err := newSupervisor(&fakeFirewall{}, publisher).runCycle(context.Background(), netip.MustParseAddr("198.51.100.1"))
-		if err == nil || !strings.Contains(err.Error(), "publish current failed") || publisher.published != 1 || publisher.lastGeneration.PFGateway != "10.0.0.1" {
-			t.Fatalf("error=%v publications=%d PF gateway=%q", err, publisher.published, publisher.lastGeneration.PFGateway)
+		if err == nil || !strings.Contains(err.Error(), "publish current failed") || publisher.published != 1 || publisher.lastGeneration.PFGateway != "192.0.2.20" || publisher.lastGeneration.WGGateway != "10.0.0.1" || !strings.Contains(publisher.lastGeneration.WGConfig, "Endpoint = 192.0.2.20:1337") {
+			t.Fatalf("error=%v publications=%d generation=%#v", err, publisher.published, publisher.lastGeneration)
 		}
+	})
+	t.Run("returned endpoint controls verifying firewall", func(t *testing.T) {
+		fw := &fakeFirewall{}
+		err := newSupervisor(fw, &fakePublisher{}).runCycle(context.Background(), netip.MustParseAddr("198.51.100.1"))
+		if err == nil || !strings.Contains(err.Error(), "start Gluetun child failed") {
+			t.Fatalf("error=%v", err)
+		}
+		for index, state := range fw.states {
+			if state == firewall.Verifying {
+				endpoint := fw.endpoints[index]
+				if endpoint.IP.String() != "192.0.2.20" || endpoint.Port != 1337 || endpoint.PFGateway.String() != "192.0.2.20" {
+					t.Fatalf("verifying endpoint=%#v", endpoint)
+				}
+				return
+			}
+		}
+		t.Fatalf("verifying firewall was not applied: states=%v", fw.states)
 	})
 	for _, tc := range []struct {
 		name      string
@@ -1050,10 +1160,29 @@ func TestProactiveRotation(t *testing.T) {
 
 func TestLogDoesNotContainRepresentativeSecrets(t *testing.T) {
 	var output bytes.Buffer
-	s := Supervisor{Logger: log.New(&output, "", 0), Status: health.NewStatus()}
+	s := Supervisor{
+		Config:    config.Config{CandidateMax: 1},
+		API:       cycleAPI{},
+		Firewall:  &fakeFirewall{},
+		Publisher: &fakePublisher{publishCurrentErr: errors.New("stop after registration")},
+		Verifier:  &fakeVerifier{},
+		Process:   &countingProcess{},
+		Logger:    log.New(&output, "", 0),
+		Status:    health.NewStatus(),
+		Now:       func() time.Time { return time.Unix(1, 0) },
+		cooldown:  map[string]time.Time{},
+	}
 	s.transition(StateAuthenticationFailed, false)
 	s.log("authentication failed; credentials were not logged")
-	for _, secret := range []string{"fixture-user-sensitive", "fixture-password-sensitive", "fixture-token-sensitive"} {
+	if err := s.runCycle(context.Background(), netip.MustParseAddr("198.51.100.1")); err == nil {
+		t.Fatal("expected publication failure")
+	}
+	for _, expected := range []string{"advertised_ip=192.0.2.10", "server_ip=192.0.2.20", "server_vip=10.0.0.1"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("safe diagnostic %q was not logged: %s", expected, output.String())
+		}
+	}
+	for _, secret := range []string{"fixture-user-sensitive", "fixture-password-sensitive", "fixture-token-sensitive", "token-fixture"} {
 		if strings.Contains(output.String(), secret) {
 			t.Fatalf("secret leaked: %s", secret)
 		}

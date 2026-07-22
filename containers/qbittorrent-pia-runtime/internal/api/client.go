@@ -260,6 +260,7 @@ func (c *Client) Register(ctx context.Context, candidate Candidate, token, publi
 		Status     string   `json:"status"`
 		ServerKey  string   `json:"server_key"`
 		ServerIP   string   `json:"server_ip"`
+		ServerVIP  string   `json:"server_vip"`
 		PeerIP     string   `json:"peer_ip"`
 		ServerPort int      `json:"server_port"`
 		DNSServers []string `json:"dns_servers"`
@@ -267,11 +268,14 @@ func (c *Client) Register(ctx context.Context, candidate Candidate, token, publi
 	if err := decodeJSON(resp.Body, &raw); err != nil {
 		return wireguard.Registration{}, errors.New("invalid WireGuard registration response")
 	}
-	if raw.Status != "OK" || raw.ServerKey == "" || raw.ServerIP == "" || raw.PeerIP == "" || raw.ServerPort < 1 || raw.ServerPort > 65535 || len(raw.DNSServers) == 0 {
+	if raw.Status != "OK" || raw.ServerKey == "" || raw.ServerIP == "" || raw.ServerVIP == "" || raw.PeerIP == "" || raw.ServerPort < 1 || raw.ServerPort > 65535 || len(raw.DNSServers) == 0 {
 		return wireguard.Registration{}, errors.New("incomplete WireGuard registration response")
 	}
 	if _, err := netip.ParseAddr(raw.ServerIP); err != nil {
-		return wireguard.Registration{}, errors.New("invalid WireGuard gateway")
+		return wireguard.Registration{}, errors.New("invalid WireGuard server endpoint")
+	}
+	if _, err := netip.ParseAddr(raw.ServerVIP); err != nil {
+		return wireguard.Registration{}, errors.New("invalid WireGuard virtual gateway")
 	}
 	if !strings.Contains(raw.PeerIP, "/") {
 		raw.PeerIP += "/32"
@@ -284,7 +288,7 @@ func (c *Client) Register(ctx context.Context, candidate Candidate, token, publi
 			return wireguard.Registration{}, errors.New("invalid DNS server")
 		}
 	}
-	return wireguard.Registration{PeerIP: raw.PeerIP, ServerKey: raw.ServerKey, ServerIP: raw.ServerIP, ServerPort: uint16(raw.ServerPort), DNSServers: raw.DNSServers}, nil
+	return wireguard.Registration{PeerIP: raw.PeerIP, ServerKey: raw.ServerKey, ServerIP: raw.ServerIP, ServerVIP: raw.ServerVIP, ServerPort: uint16(raw.ServerPort), DNSServers: raw.DNSServers}, nil
 }
 
 func (c *Client) roots() (*x509.CertPool, error) {
