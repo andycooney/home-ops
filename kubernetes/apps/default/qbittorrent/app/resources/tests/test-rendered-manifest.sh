@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
 app_dir="${repo_root}/kubernetes/apps/default/qbittorrent/app"
-expected_runtime_image='ghcr.io/andycooney/qbittorrent-pia-runtime:sha-81685f0aaca8@sha256:d47747febcead85dc75178023af6939f5e6589b718878f8a8afbb11bc459b43b'
+expected_runtime_image='ghcr.io/andycooney/qbittorrent-pia-runtime:sha-051be04bb814@sha256:ef51cc8a914d028607ea80ff42212eef82378c6f1245eb9868e807d4ceb3f8cd'
 expected_helper_image='ghcr.io/andycooney/qbittorrent-pia-port-forward:sha-2ce6208d13b2@sha256:b0c572e124abbc1ba5bf061c9d6359febdb848b6cbe276d4e56524deee7c2937'
 test_root="$(mktemp -d)"
 trap 'rm -r "${test_root}"' EXIT
