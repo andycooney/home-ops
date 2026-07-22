@@ -71,6 +71,11 @@ type Process interface {
 }
 type PublicIP func(context.Context, string, time.Duration) (netip.Addr, error)
 
+// PIA's account tokens are reusable and normally valid for 24 hours. Refresh
+// slightly early so endpoint rotation does not repeatedly call generateToken or
+// attempt registration with a token at the edge of its validity window.
+const tokenReuseLifetime = 23 * time.Hour
+
 type failureClass uint8
 
 const (
@@ -141,6 +146,8 @@ type Supervisor struct {
 	current         string
 	pfPort          uint16
 	cleanupRequired bool
+	authToken       string
+	authTokenExpiry time.Time
 	cycle           func(context.Context, netip.Addr) error
 	attempt         func(context.Context, api.Candidate, netip.Addr) error
 	generateKeyPair func() (wireguard.KeyPair, error)
@@ -341,7 +348,7 @@ func (s *Supervisor) attemptCandidate(ctx context.Context, candidate api.Candida
 	if err := s.Firewall.Apply(ctx, firewall.Bootstrap, firewall.Endpoint{}); err != nil {
 		return localFailure(err)
 	}
-	token, err := s.API.Token(ctx, s.Config.Username, s.Config.Password)
+	token, err := s.token(ctx)
 	if err != nil {
 		if api.IsAuthentication(err) {
 			return err
@@ -363,7 +370,8 @@ func (s *Supervisor) attemptCandidate(ctx context.Context, candidate api.Candida
 	registration, err := s.API.Register(ctx, candidate, token, keys.Public)
 	if err != nil {
 		if api.IsAuthentication(err) {
-			return err
+			s.invalidateToken()
+			return globalFailure(errors.New("WireGuard registration rejected cached account token"))
 		}
 		return candidateFailure(err)
 	}
@@ -389,6 +397,25 @@ func (s *Supervisor) attemptCandidate(ctx context.Context, candidate api.Candida
 		return err
 	}
 	return s.monitorHealthy(ctx, candidate, tunnelEndpoint, preTunnelIP)
+}
+
+func (s *Supervisor) token(ctx context.Context) (string, error) {
+	if s.authToken != "" && s.Now().Before(s.authTokenExpiry) {
+		return s.authToken, nil
+	}
+	s.invalidateToken()
+	token, err := s.API.Token(ctx, s.Config.Username, s.Config.Password)
+	if err != nil {
+		return "", err
+	}
+	s.authToken = token
+	s.authTokenExpiry = s.Now().Add(tokenReuseLifetime)
+	return token, nil
+}
+
+func (s *Supervisor) invalidateToken() {
+	s.authToken = ""
+	s.authTokenExpiry = time.Time{}
 }
 
 func (s *Supervisor) startAndVerify(ctx context.Context, dir, dns string, endpoint firewall.Endpoint, preTunnelIP netip.Addr) error {

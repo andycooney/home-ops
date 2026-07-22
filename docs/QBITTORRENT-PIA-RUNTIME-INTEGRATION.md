@@ -62,7 +62,7 @@ This draft makes no claim of live Talos or Kubernetes validation. Before merge o
 - the supervisor accepts only the active generation's port record;
 - port-sync updates qBittorrent;
 - the first health failure removes readiness and qBittorrent/PF access;
-- endpoint failover creates a fresh token, keypair, and generation;
+- endpoint failover reuses the unexpired account token while creating a fresh keypair and generation;
 - stale PF data is rejected;
 - pod restart leaves no session material on persistent storage;
 - graceful and forced runtime restarts remain fail-closed;
