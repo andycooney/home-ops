@@ -153,6 +153,7 @@ type Supervisor struct {
 	attempt         func(context.Context, api.Candidate, netip.Addr) error
 	generateKeyPair func() (wireguard.KeyPair, error)
 	cleanupNetwork  func(string) error
+	RestoreResolver func() error
 }
 
 func (s *Supervisor) Run(ctx context.Context) error {
@@ -585,7 +586,14 @@ func (s *Supervisor) lockAndStop(cause error) error {
 	if networkErr != nil {
 		networkErr = fmt.Errorf("remove tunnel network state: %w", networkErr)
 	}
-	return errors.Join(cause, lockErr, stopErr, networkErr)
+	var resolverErr error
+	if stopErr == nil && s.RestoreResolver != nil {
+		resolverErr = s.RestoreResolver()
+	}
+	if resolverErr != nil {
+		resolverErr = fmt.Errorf("restore pod resolver: %w", resolverErr)
+	}
+	return errors.Join(cause, lockErr, stopErr, networkErr, resolverErr)
 }
 
 func (s *Supervisor) stopChild() error {
@@ -625,8 +633,12 @@ func (s *Supervisor) deactivate(state State) error {
 	if stopErr == nil {
 		networkErr = s.removeTunnelNetwork()
 	}
+	var resolverErr error
+	if stopErr == nil && s.RestoreResolver != nil {
+		resolverErr = s.RestoreResolver()
+	}
 	var removeErr error
-	if s.current != "" && stopErr == nil && networkErr == nil && readyErr == nil && currentErr == nil {
+	if s.current != "" && stopErr == nil && networkErr == nil && resolverErr == nil && readyErr == nil && currentErr == nil {
 		removeErr = s.Publisher.Remove(s.current)
 		if removeErr == nil {
 			s.current = ""
@@ -647,10 +659,13 @@ func (s *Supervisor) deactivate(state State) error {
 	if networkErr != nil {
 		networkErr = fmt.Errorf("remove tunnel network state: %w", networkErr)
 	}
+	if resolverErr != nil {
+		resolverErr = fmt.Errorf("restore pod resolver: %w", resolverErr)
+	}
 	if removeErr != nil {
 		removeErr = fmt.Errorf("remove generation: %w", removeErr)
 	}
-	result := errors.Join(lockErr, readyErr, currentErr, stopErr, networkErr, removeErr)
+	result := errors.Join(lockErr, readyErr, currentErr, stopErr, networkErr, resolverErr, removeErr)
 	if result == nil {
 		s.cleanupRequired = false
 	}
