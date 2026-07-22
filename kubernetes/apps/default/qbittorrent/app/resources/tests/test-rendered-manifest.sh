@@ -8,7 +8,15 @@ expected_helper_image='ghcr.io/andycooney/qbittorrent-pia-port-forward:sha-2ce62
 test_root="$(mktemp -d)"
 trap 'rm -r "${test_root}"' EXIT
 
-yq -e '.spec.timeout == "30m"' "${app_dir}/helmrelease.yaml" >/dev/null
+yq -e '
+  (.spec.timeout == "30m") and
+  (.spec.postRenderers[0].kustomize.patches[0].target.group == "apps") and
+  (.spec.postRenderers[0].kustomize.patches[0].target.version == "v1") and
+  (.spec.postRenderers[0].kustomize.patches[0].target.kind == "Deployment") and
+  (.spec.postRenderers[0].kustomize.patches[0].target.name == "qbittorrent") and
+  (.spec.postRenderers[0].kustomize.patches[0].patch | contains("path: /spec/progressDeadlineSeconds")) and
+  (.spec.postRenderers[0].kustomize.patches[0].patch | contains("value: 1800"))
+' "${app_dir}/helmrelease.yaml" >/dev/null
 
 helm template qbittorrent oci://ghcr.io/bjw-s-labs/helm/app-template \
   --version 5.0.1 \
