@@ -9,7 +9,7 @@ import (
 )
 
 func testConfig() Config {
-	return Config{AllowedSubnets: []netip.Prefix{netip.MustParsePrefix("10.42.0.0/16"), netip.MustParsePrefix("fd00:42::/64")}, ApplicationUID: 1000, PFHelperUID: 65532, ServicePort: 8080, Interface: "tun0"}
+	return Config{AllowedSubnets: []netip.Prefix{netip.MustParsePrefix("10.42.0.0/16"), netip.MustParsePrefix("fd00:42::/64")}, ApplicationUID: 1000, TunnelUID: 999, PFHelperUID: 65532, ServicePort: 8080, Interface: "tun0"}
 }
 
 func TestCompleteTransactionsAndNoUIDDefaultAllowance(t *testing.T) {
@@ -157,6 +157,29 @@ func TestTransitionProtocolIsNarrow(t *testing.T) {
 	}
 }
 
+func TestUserspaceTunnelIdentityIsStateAndEndpointScoped(t *testing.T) {
+	endpoint := Endpoint{IP: netip.MustParseAddr("192.0.2.10"), Port: 1337, PFGateway: netip.MustParseAddr("192.0.2.20")}
+	direct := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 999 -p udp -d 192.0.2.10 --dport 1337 -j ACCEPT"
+	tunnel := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 999 -o tun0 -j ACCEPT"
+	drop := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 999 -j DROP"
+	for _, state := range []State{Bootstrap, Selected, Verifying, Healthy, Locked} {
+		tx, err := Transaction(testConfig(), state, endpointFor(state, endpoint), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(tx, drop) {
+			t.Fatalf("%s lacks unconditional tunnel UID block", state)
+		}
+		if state == Verifying || state == Healthy {
+			if directIndex, tunnelIndex, dropIndex := strings.Index(tx, direct), strings.Index(tx, tunnel), strings.Index(tx, drop); directIndex < 0 || tunnelIndex < 0 || !(directIndex < dropIndex && tunnelIndex < dropIndex) {
+				t.Fatalf("%s userspace WireGuard allowances are missing or ordered after its drop", state)
+			}
+		} else if strings.Contains(tx, direct) || strings.Contains(tx, tunnel) {
+			t.Fatalf("%s permits userspace tunnel egress", state)
+		}
+	}
+}
+
 func TestRootEgressIsStateScopedBeforeGenericConntrack(t *testing.T) {
 	endpoint := Endpoint{IP: netip.MustParseAddr("192.0.2.10"), Port: 1337, PFGateway: netip.MustParseAddr("192.0.2.20")}
 	rootDrop := "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -j DROP"
@@ -178,6 +201,7 @@ func TestRootEgressIsStateScopedBeforeGenericConntrack(t *testing.T) {
 		}
 		for _, identityDrop := range []string{
 			"-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 1000 -j DROP",
+			"-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 999 -j DROP",
 			"-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 65532 -j DROP",
 		} {
 			if index := strings.Index(tx, identityDrop); index < 0 || index > dropIndex {

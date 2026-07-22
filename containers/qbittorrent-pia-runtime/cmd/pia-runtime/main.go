@@ -68,7 +68,7 @@ func firewallInit() error {
 	if err != nil {
 		return err
 	}
-	manager := &firewall.Manager{Config: firewall.Config{AllowedSubnets: cfg.AllowedSubnets, ApplicationUID: cfg.ApplicationUID, PFHelperUID: cfg.PFHelperUID, ServicePort: cfg.ServicePort, Interface: cfg.Interface}}
+	manager := &firewall.Manager{Config: firewall.Config{AllowedSubnets: cfg.AllowedSubnets, ApplicationUID: cfg.ApplicationUID, TunnelUID: cfg.TunnelUID, PFHelperUID: cfg.PFHelperUID, ServicePort: cfg.ServicePort, Interface: cfg.Interface}}
 	return manager.Init(context.Background())
 }
 
@@ -82,7 +82,7 @@ func supervise() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	firewallManager := &firewall.Manager{Config: firewall.Config{AllowedSubnets: cfg.AllowedSubnets, ApplicationUID: cfg.ApplicationUID, PFHelperUID: cfg.PFHelperUID, ServicePort: cfg.ServicePort, Interface: cfg.Interface}}
+	firewallManager := &firewall.Manager{Config: firewall.Config{AllowedSubnets: cfg.AllowedSubnets, ApplicationUID: cfg.ApplicationUID, TunnelUID: cfg.TunnelUID, PFHelperUID: cfg.PFHelperUID, ServicePort: cfg.ServicePort, Interface: cfg.Interface}}
 	if err := firewallManager.Init(ctx); err != nil {
 		return err
 	}

@@ -39,14 +39,14 @@ func TestEveryStateTransitionIsLiveAndNotReadyExceptHealthy(t *testing.T) {
 func TestChildEnvironmentRedactsSecretsAndDisablesGluetunOwners(t *testing.T) {
 	secrets := []string{"PIA_USERNAME=user-sensitive", "PIA_PASSWORD=password-sensitive", "UNRELATED_TOKEN=token-sensitive", "APP_PRIVATE_KEY=key-sensitive", "VPN_PORT_FORWARDING_PASSWORD=pf-sensitive", "UNRELATED_SECRET=secret-sensitive", "AWS_ACCESS_KEY_ID=access-sensitive", "OPENVPN_USER=openvpn-sensitive"}
 	source := append(secrets, "PATH=/usr/bin", "HEALTH_RESTART_VPN=on", "FIREWALL_ENABLED_DISABLING_IT_SHOOTS_YOU_IN_YOUR_FOOT=on")
-	env := ChildEnvironment(source, "/run/pia/current/wg0.conf")
+	env := ChildEnvironment(source, "/run/pia/current/wg0.conf", 999)
 	joined := strings.Join(env, "\n")
 	for _, secret := range []string{"user-sensitive", "password-sensitive", "token-sensitive", "key-sensitive", "pf-sensitive", "secret-sensitive", "access-sensitive", "openvpn-sensitive"} {
 		if strings.Contains(joined, secret) {
 			t.Fatalf("secret leaked: %s", secret)
 		}
 	}
-	required := []string{"VPN_SERVICE_PROVIDER=custom", "VPN_TYPE=wireguard", "FIREWALL_ENABLED_DISABLING_IT_SHOOTS_YOU_IN_YOUR_FOOT=off", "HEALTH_RESTART_VPN=off", "PUBLICIP_ENABLED=off", "VERSION_INFORMATION=off", "WIREGUARD_CONF_SECRETFILE=/run/pia/current/wg0.conf"}
+	required := []string{"VPN_SERVICE_PROVIDER=custom", "VPN_TYPE=wireguard", "WIREGUARD_IMPLEMENTATION=userspace", "PUID=999", "PGID=999", "FIREWALL_ENABLED_DISABLING_IT_SHOOTS_YOU_IN_YOUR_FOOT=off", "HEALTH_RESTART_VPN=off", "PUBLICIP_ENABLED=off", "VERSION_INFORMATION=off", "WIREGUARD_CONF_SECRETFILE=/run/pia/current/wg0.conf"}
 	for _, value := range required {
 		if !strings.Contains(joined, value) {
 			t.Fatalf("missing %s", value)

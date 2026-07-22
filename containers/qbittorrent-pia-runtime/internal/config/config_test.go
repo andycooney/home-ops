@@ -14,7 +14,7 @@ func TestLoadDefaultsAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.CandidateMin != 3 || cfg.CandidateMax != 6 || cfg.HealthFailures != 4 || cfg.HealthInterval != 15*time.Second || cfg.PFHelperUID != 65532 {
+	if cfg.CandidateMin != 3 || cfg.CandidateMax != 6 || cfg.HealthFailures != 4 || cfg.HealthInterval != 15*time.Second || cfg.TunnelUID != 999 || cfg.PFHelperUID != 65532 {
 		t.Fatalf("unexpected defaults: %#v", cfg)
 	}
 	if len(cfg.AllowedSubnets) != 2 {
@@ -28,6 +28,15 @@ func TestRejectsUnsafePFHelperUID(t *testing.T) {
 	t.Setenv("PIA_PF_HELPER_UID", "1000")
 	if _, err := Load(); err == nil {
 		t.Fatal("accepted PF helper UID matching the application UID")
+	}
+}
+
+func TestRejectsCollidingTunnelUID(t *testing.T) {
+	t.Setenv("PIA_USERNAME", "user-fixture")
+	t.Setenv("PIA_PASSWORD", "password-fixture")
+	t.Setenv("PIA_TUNNEL_UID", "1000")
+	if _, err := Load(); err == nil {
+		t.Fatal("accepted tunnel UID matching the application UID")
 	}
 }
 

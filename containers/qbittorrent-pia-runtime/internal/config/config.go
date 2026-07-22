@@ -32,6 +32,7 @@ type Config struct {
 	GluetunEntrypoint  string
 	Interface          string
 	ApplicationUID     int
+	TunnelUID          int
 	PFHelperUID        int
 	ReaderGID          int
 	ServicePort        uint16
@@ -69,6 +70,9 @@ func load(requireCredentials bool) (Config, error) {
 		return Config{}, err
 	}
 	if c.ApplicationUID, err = integer("PIA_APPLICATION_UID", 1000); err != nil {
+		return Config{}, err
+	}
+	if c.TunnelUID, err = integer("PIA_TUNNEL_UID", 999); err != nil {
 		return Config{}, err
 	}
 	if c.PFHelperUID, err = integer("PIA_PF_HELPER_UID", 65532); err != nil {
@@ -144,7 +148,7 @@ func (c Config) Validate() error {
 }
 
 func (c Config) validateFirewall() error {
-	if c.ApplicationUID <= 0 || c.PFHelperUID <= 0 || c.PFHelperUID == c.ApplicationUID || c.ReaderGID <= 0 || c.ServicePort == 0 || c.Interface == "" {
+	if c.ApplicationUID <= 0 || c.TunnelUID <= 0 || c.PFHelperUID <= 0 || c.TunnelUID == c.ApplicationUID || c.TunnelUID == c.PFHelperUID || c.PFHelperUID == c.ApplicationUID || c.ReaderGID <= 0 || c.ServicePort == 0 || c.Interface == "" {
 		return errors.New("invalid firewall identity, port, or interface")
 	}
 	for _, p := range c.AllowedSubnets {

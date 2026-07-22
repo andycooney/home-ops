@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -423,7 +424,7 @@ func (s *Supervisor) startAndVerify(ctx context.Context, dir, dns string, endpoi
 	if err := s.Firewall.Apply(ctx, firewall.Verifying, endpoint); err != nil {
 		return localFailure(s.lockAndStop(fmt.Errorf("apply verifying firewall: %w", err)))
 	}
-	env := ChildEnvironment(os.Environ(), dir+"/wg0.conf")
+	env := ChildEnvironment(os.Environ(), dir+"/wg0.conf", s.Config.TunnelUID)
 	child, err := s.Process.Start(s.Config.GluetunEntrypoint, env)
 	if err != nil {
 		return localFailure(errors.New("start Gluetun child failed"))
@@ -726,10 +727,11 @@ func (s *Supervisor) defaults() error {
 	return nil
 }
 
-func ChildEnvironment(source []string, wgConfigPath string) []string {
+func ChildEnvironment(source []string, wgConfigPath string, tunnelUID int) []string {
 	blocked := []string{"PIA_", "TOKEN", "PASS", "SECRET", "AUTH", "CREDENTIAL", "ACCESS_KEY", "API_KEY", "PRIVATE_KEY", "USERNAME", "OPENVPN_USER", "HTTPPROXY_USER", "UPDATER_PROTONVPN_EMAIL"}
 	overrideValues := []string{
 		"VPN_SERVICE_PROVIDER=custom", "VPN_TYPE=wireguard", "WIREGUARD_CONF_SECRETFILE=" + wgConfigPath,
+		"WIREGUARD_IMPLEMENTATION=userspace", "PUID=" + strconv.Itoa(tunnelUID), "PGID=" + strconv.Itoa(tunnelUID),
 		"FIREWALL_ENABLED_DISABLING_IT_SHOOTS_YOU_IN_YOUR_FOOT=off", "HEALTH_RESTART_VPN=off",
 		"PUBLICIP_ENABLED=off", "VERSION_INFORMATION=off", "VPN_PORT_FORWARDING=off",
 	}
