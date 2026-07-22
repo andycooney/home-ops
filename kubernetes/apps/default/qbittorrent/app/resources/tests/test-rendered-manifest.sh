@@ -30,6 +30,7 @@ yq -o=json -I=0 'select(.kind == "ExternalSecret" and .metadata.name == "qbittor
 
 jq -e --arg image "${expected_runtime_image}" --arg helperImage "${expected_helper_image}" '
   .spec.template.spec as $pod |
+  (.metadata.annotations["reloader.stakater.com/auto"] == "true") and
   ($pod.hostNetwork == false) and
   ($pod.initContainers | length == 1) and
   ($pod.initContainers[0].name == "firewall-init") and

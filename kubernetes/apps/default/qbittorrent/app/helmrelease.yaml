@@ -25,6 +25,8 @@ spec:
   values:
     controllers:
       qbittorrent:
+        annotations:
+          reloader.stakater.com/auto: "true"
         initContainers:
           firewall-init:
             image:
