@@ -80,6 +80,10 @@ func supervise() error {
 	if err := session.RequireTmpfs(cfg.RuntimeDir); err != nil {
 		return err
 	}
+	restoreResolver, err := supervisor.SnapshotResolver("/etc/resolv.conf")
+	if err != nil {
+		return fmt.Errorf("snapshot pod resolver: %w", err)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	firewallManager := &firewall.Manager{Config: firewall.Config{AllowedSubnets: cfg.AllowedSubnets, ApplicationUID: cfg.ApplicationUID, TunnelUID: cfg.TunnelUID, PFHelperUID: cfg.PFHelperUID, ServicePort: cfg.ServicePort, Interface: cfg.Interface}}
@@ -95,7 +99,7 @@ func supervise() error {
 	apiClient := &api.Client{ServerListURL: cfg.ServerListURL, TokenURL: cfg.TokenURL, CACertPath: cfg.CACertPath, ProbeTimeout: cfg.ProbeTimeout}
 	publisher := &session.Publisher{Root: cfg.RuntimeDir, ReaderGID: cfg.ReaderGID, PFHelperUID: cfg.PFHelperUID}
 	verifier := &health.Verifier{Interface: cfg.Interface, HTTPSURL: cfg.PublicIPURL, Timeout: cfg.ProbeTimeout}
-	s := &supervisor.Supervisor{Config: cfg, API: apiClient, Firewall: firewallManager, Publisher: publisher, Verifier: verifier, Process: supervisor.OSProcess{}, Status: status, Logger: log.New(os.Stdout, "pia-runtime ", log.LstdFlags|log.LUTC)}
+	s := &supervisor.Supervisor{Config: cfg, API: apiClient, Firewall: firewallManager, Publisher: publisher, Verifier: verifier, Process: supervisor.OSProcess{}, Status: status, Logger: log.New(os.Stdout, "pia-runtime ", log.LstdFlags|log.LUTC), RestoreResolver: restoreResolver}
 	return s.Run(ctx)
 }
 

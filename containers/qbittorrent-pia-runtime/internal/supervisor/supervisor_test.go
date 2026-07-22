@@ -1171,15 +1171,50 @@ func TestFailoverRemovesTunnelNetworkBeforeGeneration(t *testing.T) {
 			events = append(events, "remove-tunnel-network")
 			return nil
 		},
+		RestoreResolver: func() error {
+			events = append(events, "restore-resolver")
+			return nil
+		},
 	}
 	if err := s.deactivate(StateFailingOver); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(events, ",") != "firewall:LOCKED,invalidate-ready,invalidate-current,stop-child,remove-tunnel-network,remove" {
+	if strings.Join(events, ",") != "firewall:LOCKED,invalidate-ready,invalidate-current,stop-child,remove-tunnel-network,restore-resolver,remove" {
 		t.Fatalf("events=%v", events)
 	}
 	if s.child != nil || s.current != "" || s.cleanupRequired {
 		t.Fatalf("child=%v current=%q cleanup=%v", s.child, s.current, s.cleanupRequired)
+	}
+}
+
+func TestResolverRestoreFailureRetainsGenerationAndRetries(t *testing.T) {
+	calls := 0
+	publisher := &fakePublisher{}
+	s := Supervisor{
+		Config:    config.Config{ShutdownGrace: time.Second},
+		Firewall:  &fakeFirewall{},
+		Publisher: publisher,
+		Status:    health.NewStatus(),
+		child:     &fakeChild{done: make(chan error)},
+		current:   "gen-one",
+		Now:       func() time.Time { return time.Unix(1, 0) },
+		Sleep:     func(context.Context, time.Duration) error { return nil },
+		RestoreResolver: func() error {
+			calls++
+			if calls == 1 {
+				return errors.New("resolver restore failed")
+			}
+			return nil
+		},
+	}
+	if err := s.deactivate(StateFailingOver); err == nil || !strings.Contains(err.Error(), "resolver restore failed") || !s.cleanupRequired || s.current != "gen-one" || publisher.removed != 0 {
+		t.Fatalf("error=%v cleanup=%v current=%q removals=%d", err, s.cleanupRequired, s.current, publisher.removed)
+	}
+	if err := s.retryCandidateCleanup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || s.current != "" || s.cleanupRequired || publisher.removed != 1 {
+		t.Fatalf("calls=%d current=%q cleanup=%v removals=%d", calls, s.current, s.cleanupRequired, publisher.removed)
 	}
 }
 
