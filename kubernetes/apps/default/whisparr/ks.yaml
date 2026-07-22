@@ -5,7 +5,6 @@ kind: Kustomization
 metadata:
   name: whisparr
 spec:
-  suspend: true
   components:
     - ../../../../components/zeroscaler
     - ../../../../components/volsync
