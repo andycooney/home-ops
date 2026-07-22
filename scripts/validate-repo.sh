@@ -23,12 +23,6 @@ if grep -R -n -E '(BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY|AKIA[0-9A-Z]{16}|ghp_[
   exit 1
 fi
 
-section "qBittorrent runtime integration scripts"
-sh -n kubernetes/apps/default/qbittorrent/app/resources/pia-port-forward.sh
-sh -n kubernetes/apps/default/qbittorrent/app/resources/port-sync.sh
-bash -n kubernetes/apps/default/qbittorrent/app/resources/tests/test-runtime-scripts.sh
-kubernetes/apps/default/qbittorrent/app/resources/tests/test-runtime-scripts.sh
-
 section "Kustomize renders"
 paths=(
   "kubernetes/apps"

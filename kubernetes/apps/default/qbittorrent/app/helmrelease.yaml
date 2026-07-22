@@ -13,50 +13,15 @@ spec:
   values:
     controllers:
       qbittorrent:
-        initContainers:
-          firewall-init:
-            image:
-              repository: ghcr.io/andycooney/qbittorrent-pia-runtime
-              tag: sha-b64d67430d9c@sha256:60ba85d3feb69ab795faca5b61af0f950e027f7618291ff98572559806800296
-            command:
-              - /usr/local/bin/pia-runtime
-              - firewall-init
-            env: &runtimeEnv
-              PIA_ALLOWED_SUBNETS: 10.42.0.0/16,10.43.0.0/16,172.16.0.0/12,192.168.0.0/16
-              PIA_APPLICATION_UID: "1000"
-              PIA_PF_HELPER_UID: "65532"
-              PIA_READER_GID: "65532"
-              PIA_RUNTIME_DIR: /run/pia
-              PIA_RUNTIME_LISTEN: 127.0.0.1:8001
-              PIA_SERVICE_PORT: "80"
-              PIA_TUNNEL_INTERFACE: tun0
-              TZ: America/New_York
-            securityContext:
-              runAsUser: 0
-              runAsGroup: 0
-              privileged: false
-              allowPrivilegeEscalation: false
-              capabilities:
-                drop: ["ALL"]
-                add: ["NET_ADMIN"]
-            resources:
-              requests:
-                cpu: 1m
-                memory: 32Mi
-              limits:
-                memory: 64Mi
         containers:
           port-sync:
             image:
-              repository: ghcr.io/andycooney/qbittorrent-pia-port-forward
-              tag: sha-2ce6208d13b2@sha256:b0c572e124abbc1ba5bf061c9d6359febdb848b6cbe276d4e56524deee7c2937
+              repository: docker.io/curlimages/curl
+              tag: 8.20.0
             command:
               - /bin/sh
               - /scripts/port-sync.sh
             env:
-              POLL_SECONDS: "5"
-              QBIT_URL: http://127.0.0.1:80
-              RUNTIME_DIR: /run/pia
               TZ: America/New_York
             resources:
               requests:
@@ -64,26 +29,20 @@ spec:
                 memory: 32Mi
               limits:
                 memory: 128Mi
-            securityContext:
-              runAsNonRoot: true
-              runAsUser: 65532
-              runAsGroup: 65532
-              allowPrivilegeEscalation: false
-              readOnlyRootFilesystem: true
-              capabilities: {drop: ["ALL"]}
           pia-port-forward:
             image:
               repository: ghcr.io/andycooney/qbittorrent-pia-port-forward
-              tag: sha-2ce6208d13b2@sha256:b0c572e124abbc1ba5bf061c9d6359febdb848b6cbe276d4e56524deee7c2937
+              tag: sha-2ce6208d13b2
             command:
               - /bin/sh
               - /scripts/pia-port-forward.sh
             env:
-              PIA_CA_CERT: /scripts/pia-ca.rsa.4096.crt
-              POLL_SECONDS: "5"
-              RENEW_SECONDS: "900"
-              RUNTIME_DIR: /run/pia
-              TZ: America/New_York
+              PORT_FILE: /tmp/gluetun/forwarded_port
+              RENEW_SECONDS: "43200"
+              STARTUP_TIMEOUT_SECONDS: "180"
+            envFrom:
+              - secretRef:
+                  name: qbittorrent-vpn-secret
             resources:
               requests:
                 cpu: 1m
@@ -91,55 +50,35 @@ spec:
               limits:
                 memory: 128Mi
             securityContext:
-              runAsNonRoot: true
-              runAsUser: 65532
-              runAsGroup: 65532
               allowPrivilegeEscalation: false
-              readOnlyRootFilesystem: true
-              capabilities: {drop: ["ALL"]}
 
           gluetun:
             image:
-              repository: ghcr.io/andycooney/qbittorrent-pia-runtime
-              tag: sha-b64d67430d9c@sha256:60ba85d3feb69ab795faca5b61af0f950e027f7618291ff98572559806800296
-            env: *runtimeEnv
+              repository: ghcr.io/qdm12/gluetun
+              tag: v3.41.1
+            env:
+              VPN_SERVICE_PROVIDER: custom
+              VPN_TYPE: wireguard
+              WIREGUARD_CONF_SECRET_FILE: /gluetun/wireguard/wg0.conf
+              VPN_PORT_FORWARDING: "off"
+              VPN_PORT_FORWARDING_STATUS_FILE: /tmp/gluetun/forwarded_port
+              FIREWALL_INPUT_PORTS: "80"
+              FIREWALL_OUTBOUND_SUBNETS: 172.16.20.0/22,172.16.24.0/22,192.168.0.0/16,172.16.0.0/12
+              DNS_ADDRESS: 1.1.1.1
+              DOT: "off"
+              IPV6: "off"
+              VPN_IPV6: "off"
+              DOT_IPV6: "off"
+              TZ: America/New_York
             envFrom:
               - secretRef:
                   name: qbittorrent-vpn-secret
-            probes:
-              liveness:
-                enabled: true
-                custom: true
-                spec:
-                  exec:
-                    command:
-                      - /usr/local/bin/pia-runtime
-                      - healthcheck
-                  periodSeconds: 15
-                  timeoutSeconds: 3
-                  failureThreshold: 4
-              readiness:
-                enabled: true
-                custom: true
-                spec:
-                  exec:
-                    command:
-                      - /usr/local/bin/pia-runtime
-                      - readycheck
-                  periodSeconds: 5
-                  timeoutSeconds: 3
-                  failureThreshold: 1
             securityContext:
               runAsUser: 0
               runAsGroup: 0
-              privileged: false
               allowPrivilegeEscalation: false
               capabilities:
-                drop: ["ALL"]
-                add:
-                  - NET_ADMIN
-                  - CHOWN
-                  - DAC_OVERRIDE
+                add: ["NET_ADMIN"]
             resources:
               requests:
                 cpu: 5m
@@ -216,19 +155,16 @@ spec:
           qbittorrent:
             gluetun:
               - path: /dev/net/tun
-      pia-runtime:
+      gluetun-tmp:
         type: emptyDir
-        medium: Memory
-        sizeLimit: 16Mi
         advancedMounts:
           qbittorrent:
             gluetun:
-              - path: /run/pia
+              - path: /tmp/gluetun
             port-sync:
-              - path: /run/pia
-                readOnly: true
+              - path: /tmp/gluetun
             pia-port-forward:
-              - path: /run/pia
+              - path: /tmp/gluetun
       scripts:
         type: configMap
         name: qbittorrent-scripts
@@ -245,33 +181,27 @@ spec:
               - path: /scripts/pia-ca.rsa.4096.crt
                 subPath: pia-ca.rsa.4096.crt
                 readOnly: true
-      config:
-        existingClaim: "{{ .Release.Name }}"
+      wireguard:
+        type: secret
+        name: qbittorrent-pia-wg-ca-ontario-secret
         advancedMounts:
           qbittorrent:
-            app:
-              - path: /config
+            gluetun:
+              - path: /gluetun/wireguard/wg0.conf
+                subPath: wg0.conf
+      config:
+        existingClaim: "{{ .Release.Name }}"
       media:
         type: nfs
         server: storage.cooney.site
         path: /mnt/bytebarn/media
-        advancedMounts:
-          qbittorrent:
-            app:
-              - path: /media
+        globalMounts:
+          - path: /media
       unprocessed:
         type: nfs
         server: storage.cooney.site
         path: /mnt/bytebarn/unprocessed
-        advancedMounts:
-          qbittorrent:
-            app:
-              - path: /unprocessed
+        globalMounts:
+          - path: /unprocessed
       tmp:
         type: emptyDir
-        advancedMounts:
-          qbittorrent:
-            app:
-              - path: /tmp
-            gluetun:
-              - path: /tmp
