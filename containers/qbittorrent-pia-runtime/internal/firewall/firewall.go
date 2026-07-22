@@ -146,6 +146,9 @@ func Transaction(cfg Config, state State, endpoint Endpoint, ipv6 bool) (string,
 	if state == Selected && endpoint.IP.Is6() == ipv6 {
 		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -p tcp -d %s --dport %d -j ACCEPT\n", endpoint.IP, endpoint.Port)
 	}
+	if (state == Verifying || state == Healthy) && endpoint.IP.Is6() == ipv6 {
+		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -p udp -d %s --dport %d -j ACCEPT\n", endpoint.IP, endpoint.Port)
+	}
 	if state == Verifying || state == Healthy {
 		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -o %s -j ACCEPT\n", cfg.Interface)
 	}
