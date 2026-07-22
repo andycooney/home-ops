@@ -107,8 +107,8 @@ func selfTest() error {
 	if err != nil {
 		return err
 	}
-	registration := wireguard.Registration{PeerIP: "10.0.0.2/32", ServerKey: keys.Public, ServerIP: "10.0.0.1", ServerPort: 1337, DNSServers: []string{"10.0.0.1"}}
-	conf, err := wireguard.BuildConfig(keys, "192.0.2.10", registration)
+	registration := wireguard.Registration{PeerIP: "10.0.0.2/32", ServerKey: keys.Public, ServerIP: "192.0.2.10", ServerVIP: "10.0.0.1", ServerPort: 1337, DNSServers: []string{"10.0.0.1"}}
+	conf, err := wireguard.BuildConfig(keys, registration)
 	if err != nil {
 		return err
 	}

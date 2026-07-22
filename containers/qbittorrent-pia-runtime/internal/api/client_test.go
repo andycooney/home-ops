@@ -147,7 +147,7 @@ func TestTLSHostnameToIPAndCertificateValidation(t *testing.T) {
 		if r.URL.Path != "/addKey" || r.URL.Query().Get("pt") == "" || r.URL.Query().Get("pubkey") == "" {
 			t.Error("registration request missing fields")
 		}
-		_, _ = w.Write([]byte(`{"status":"OK","server_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","server_port":1337,"server_ip":"10.0.0.1","peer_ip":"10.0.0.2","dns_servers":["10.0.0.1"]}`))
+		_, _ = w.Write([]byte(`{"status":"OK","server_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","server_port":1337,"server_ip":"192.0.2.50","server_vip":"10.0.0.1","peer_ip":"10.0.0.2","dns_servers":["10.0.0.1"]}`))
 	})}
 	tlsListener := newTLSListener(listener, cert)
 	go server.Serve(tlsListener)
@@ -166,7 +166,7 @@ func TestTLSHostnameToIPAndCertificateValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if registration.ServerIP != "10.0.0.1" {
+	if registration.ServerIP != "192.0.2.50" || registration.ServerVIP != "10.0.0.1" {
 		t.Fatal("registration parse failed")
 	}
 	if !registrationConnectionClose.Load() {
