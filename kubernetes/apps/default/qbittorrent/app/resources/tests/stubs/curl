@@ -1,0 +1,79 @@
+#!/usr/bin/env sh
+set -eu
+
+printf '%s\n' "$*" >> "${CURL_LOG:?}"
+
+capture_parameter_file() {
+  parameter_name="$1"
+  parameter_path="$2"
+  [ -z "${CURL_CAPTURE_DIR:-}" ] && return 0
+  mkdir -p "${CURL_CAPTURE_DIR}"
+  capture_counter_file="${CURL_CAPTURE_DIR}/.counter"
+  capture_counter="$(cat "${capture_counter_file}" 2>/dev/null || printf '0')"
+  capture_counter=$((capture_counter + 1))
+  printf '%s' "${capture_counter}" > "${capture_counter_file}"
+  cp "${parameter_path}" "${CURL_CAPTURE_DIR}/${parameter_name}.${capture_counter}"
+}
+
+for curl_argument in "$@"; do
+  case "${curl_argument}" in
+    token@*) capture_parameter_file token "${curl_argument#token@}" ;;
+    payload@*) capture_parameter_file payload "${curl_argument#payload@}" ;;
+    signature@*) capture_parameter_file signature "${curl_argument#signature@}" ;;
+  esac
+done
+
+case "$*" in
+  *getSignature*)
+    if [ -n "${SWITCH_READY_ON_SIGNATURE:-}" ]; then
+      ln -sfn "sessions/${SWITCH_READY_ON_SIGNATURE}" "${READY_LINK_FOR_TEST:?}"
+    fi
+    if [ -n "${TEST_SIGNATURE_RESPONSE:-}" ]; then
+      printf '%s\n' "${TEST_SIGNATURE_RESPONSE}"
+    else
+      printf '%s\n' '{"status":"ERROR"}'
+    fi
+    ;;
+  *bindPort*)
+    if [ -n "${SWITCH_READY_AFTER_BIND:-}" ]; then
+      ln -sfn "sessions/${SWITCH_READY_AFTER_BIND}" "${READY_LINK_FOR_TEST:?}"
+    fi
+    if [ -n "${TEST_BIND_RESPONSE:-}" ]; then
+      printf '%s\n' "${TEST_BIND_RESPONSE}"
+    else
+      printf '%s\n' '{"status":"OK"}'
+    fi
+    ;;
+  *setPreferences*)
+    if [ -n "${QBIT_STATE_FILE:-}" ]; then
+      for curl_argument in "$@"; do
+        case "${curl_argument}" in
+          json=*)
+            qbit_port="$(printf '%s' "${curl_argument}" | sed -n 's/.*"listen_port":\([0-9][0-9]*\).*/\1/p')"
+            [ -n "${qbit_port}" ] && printf '%s' "${qbit_port}" > "${QBIT_STATE_FILE}"
+            ;;
+        esac
+      done
+    fi
+    printf '%s\n' '{}'
+    ;;
+  *preferences*)
+    if [ -n "${QBIT_GET_COUNTER_FILE:-}" ]; then
+      qbit_get_count="$(cat "${QBIT_GET_COUNTER_FILE}" 2>/dev/null || printf '0')"
+      qbit_get_count=$((qbit_get_count + 1))
+      printf '%s' "${qbit_get_count}" > "${QBIT_GET_COUNTER_FILE}"
+      if [ "${qbit_get_count}" = "${RESET_QBIT_ON_GET_NUMBER:-never}" ]; then
+        printf '%s' "${RESET_QBIT_VALUE:-40000}" > "${QBIT_STATE_FILE:?}"
+      fi
+    fi
+    if [ -n "${QBIT_STATE_FILE:-}" ] && [ -s "${QBIT_STATE_FILE}" ]; then
+      qbit_current="$(cat "${QBIT_STATE_FILE}")"
+    else
+      qbit_current="${TEST_QBIT_CURRENT:-40000}"
+    fi
+    printf '{"listen_port":%s}\n' "${qbit_current}"
+    ;;
+  *)
+    exit 1
+    ;;
+esac
