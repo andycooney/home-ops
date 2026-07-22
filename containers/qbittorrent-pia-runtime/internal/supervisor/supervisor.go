@@ -75,6 +75,7 @@ type failureClass uint8
 const (
 	failureLocal failureClass = iota
 	failureCandidate
+	failureRefresh
 	failureRotation
 	failureGlobal
 	failureAuthentication
@@ -92,6 +93,8 @@ func (c failureClass) String() string {
 	switch c {
 	case failureCandidate:
 		return "candidate"
+	case failureRefresh:
+		return "endpoint-refresh"
 	case failureRotation:
 		return "rotation"
 	case failureGlobal:
@@ -115,6 +118,7 @@ func classifyFailure(err error) failureClass {
 }
 
 func candidateFailure(err error) error { return &classifiedFailure{class: failureCandidate, err: err} }
+func refreshFailure(err error) error   { return &classifiedFailure{class: failureRefresh, err: err} }
 func rotationFailure(err error) error  { return &classifiedFailure{class: failureRotation, err: err} }
 func globalFailure(err error) error    { return &classifiedFailure{class: failureGlobal, err: err} }
 func localFailure(err error) error     { return &classifiedFailure{class: failureLocal, err: err} }
@@ -206,6 +210,12 @@ func (s *Supervisor) backoffLoop(ctx context.Context) error {
 		if cleanupErr != nil {
 			err = errors.Join(err, cleanupErr)
 		}
+		failure := classifyFailure(err)
+		if cleanupErr == nil && (failure == failureRefresh || failure == failureRotation) {
+			s.log("session ended classification=%s; refreshing server metadata immediately", failure)
+			backoff = 30 * time.Second
+			continue
+		}
 		if cleanupErr == nil && api.IsAuthentication(err) {
 			s.transition(StateAuthenticationFailed, false)
 			s.log("authentication failed; credentials were not logged")
@@ -266,11 +276,18 @@ func (s *Supervisor) runCycle(ctx context.Context, preTunnelIP netip.Addr) error
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if failure == failureRefresh {
+			s.cool(candidate)
+			return err
+		}
+		if failure == failureRotation {
+			return err
+		}
 		lastErr = err
 		if cleanupErr := s.retryCandidateCleanup(ctx); cleanupErr != nil {
 			return errors.Join(err, cleanupErr)
 		}
-		if failure != failureCandidate && failure != failureRotation {
+		if failure != failureCandidate {
 			return err
 		}
 		if failure == failureCandidate {
@@ -426,7 +443,7 @@ func (s *Supervisor) monitorHealthy(ctx context.Context, candidate api.Candidate
 			if err == nil {
 				err = errors.New("gluetun exited")
 			}
-			return candidateFailure(err)
+			return refreshFailure(err)
 		default:
 		}
 		if err := s.Sleep(ctx, s.Config.HealthInterval); err != nil {
@@ -446,13 +463,14 @@ func (s *Supervisor) monitorHealthy(ctx context.Context, candidate api.Candidate
 			continue
 		}
 		failures++
+		s.log("established tunnel health failed consecutive=%d threshold=%d endpoint=%s reason=%s", failures, s.Config.HealthFailures, netip.AddrPortFrom(endpoint.IP, endpoint.Port), err)
 		if failures == 1 {
 			if err := s.restrictForVerification(ctx, endpoint); err != nil {
 				return localFailure(err)
 			}
 		}
 		if failures >= s.Config.HealthFailures {
-			return candidateFailure(fmt.Errorf("health failure threshold reached for %s", candidate.RegionID))
+			return refreshFailure(fmt.Errorf("health failure threshold reached for %s", candidate.RegionID))
 		}
 	}
 }
