@@ -45,12 +45,12 @@ jq -e --arg image "${expected_runtime_image}" --arg helperImage "${expected_help
     .PIA_ALLOWED_SUBNETS == "10.42.0.0/16,10.43.0.0/16,172.16.0.0/12,192.168.0.0/16" and
     .PIA_APPLICATION_UID == "1000" and
     .PIA_PF_HELPER_UID == "65532" and
+    .PIA_PREFERRED_REGIONS == "ca,ca_ontario,ca_toronto,ca_vancouver" and
     .PIA_READER_GID == "65532" and
     .PIA_RUNTIME_DIR == "/run/pia" and
     .PIA_RUNTIME_LISTEN == "127.0.0.1:8001" and
     .PIA_SERVICE_PORT == "80" and
-    .PIA_TUNNEL_INTERFACE == "tun0" and
-    (has("PIA_PREFERRED_REGIONS") | not)
+    .PIA_TUNNEL_INTERFACE == "tun0"
   ) and
   ($pod.containers[] | select(.name == "gluetun") | .envFrom == [{"secretRef":{"name":"qbittorrent-vpn-secret"}}]) and
   ($pod.containers[] | select(.name == "gluetun") | .securityContext.runAsUser == 0) and

@@ -24,6 +24,8 @@ qBittorrent remains UID/GID 1000, non-root, read-only-root, and capability-free.
 
 The `qbittorrent-vpn-secret` ExternalSecret uses `mergePolicy: Replace` and emits only `PIA_USERNAME` and `PIA_PASSWORD` from the existing `pia` item's `username` and `password` fields. The old static WireGuard Secret, static PF hostname/gateway, Gluetun WireGuard mount, and `/tmp/gluetun/forwarded_port` handoff are removed. No 1Password values are changed.
 
+Discovery prefers the stable PIA region IDs for Montreal, Ontario, Toronto, and Vancouver, in that order. Only the region IDs are configured: the supervisor still refetches PIA's current metadata and dynamically selects and registers current WireGuard endpoints at runtime. If those preferred regions cannot produce a session, the bounded candidate list falls back to other eligible non-US port-forwarding regions.
+
 ## Generation-bound port forwarding
 
 The unprivileged PF helper waits for `/run/pia/ready`, snapshots its `sessions/<generation>` target, and then reads `generation`, `pia.token`, `tls-hostname`, and `pf-gateway` from that immutable generation path. It never requests another token and never receives the username or password. Curl is bound to `tun0`, preserves TLS hostname verification with the reviewed PIA CA, and connects only to the generation's PF gateway on TCP 19999.

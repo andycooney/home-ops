@@ -25,6 +25,7 @@ spec:
               PIA_ALLOWED_SUBNETS: 10.42.0.0/16,10.43.0.0/16,172.16.0.0/12,192.168.0.0/16
               PIA_APPLICATION_UID: "1000"
               PIA_PF_HELPER_UID: "65532"
+              PIA_PREFERRED_REGIONS: ca,ca_ontario,ca_toronto,ca_vancouver
               PIA_READER_GID: "65532"
               PIA_RUNTIME_DIR: /run/pia
               PIA_RUNTIME_LISTEN: 127.0.0.1:8001
