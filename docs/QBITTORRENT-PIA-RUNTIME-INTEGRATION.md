@@ -5,10 +5,10 @@
 This integration consumes the PR 1 supervisor image without changing its runtime source. The qBittorrent pod uses the repository-plus-tag convention with this exact linux/amd64 OCI index reference:
 
 ```text
-ghcr.io/andycooney/qbittorrent-pia-runtime:sha-57cb9074d7f5@sha256:85a993530216302f4a04f507e936241c1d1c6468840b4e692980c92b50deb243
+ghcr.io/andycooney/qbittorrent-pia-runtime:sha-81685f0aaca8@sha256:d47747febcead85dc75178023af6939f5e6589b718878f8a8afbb11bc459b43b
 ```
 
-The digest is the OCI index digest published for merge commit `57cb9074d7f5621f0ec7c38173b85a8f1fb5632b`. It is not the attestation-manifest digest. The runtime image defines the supervisor, dynamic endpoint discovery and refresh, firewall, state machine, and session contract in [`QBITTORRENT-PIA-RUNTIME-IMAGE.md`](QBITTORRENT-PIA-RUNTIME-IMAGE.md); this change integrates that contract with the existing application.
+The digest is the OCI index digest published for merge commit `81685f0aaca84c606c95e5438e92c4a378dd144a`. It is not the attestation-manifest digest. The runtime image defines the supervisor, dynamic endpoint discovery and refresh, firewall, state machine, and session contract in [`QBITTORRENT-PIA-RUNTIME-IMAGE.md`](QBITTORRENT-PIA-RUNTIME-IMAGE.md); this change integrates that contract with the existing application.
 
 ## Startup ordering and identities
 
