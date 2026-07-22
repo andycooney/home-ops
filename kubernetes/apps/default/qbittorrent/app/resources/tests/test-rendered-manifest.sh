@@ -8,6 +8,8 @@ expected_helper_image='ghcr.io/andycooney/qbittorrent-pia-port-forward:sha-2ce62
 test_root="$(mktemp -d)"
 trap 'rm -r "${test_root}"' EXIT
 
+yq -e '.spec.timeout == "30m"' "${app_dir}/helmrelease.yaml" >/dev/null
+
 helm template qbittorrent oci://ghcr.io/bjw-s-labs/helm/app-template \
   --version 5.0.1 \
   --namespace default \

@@ -8,7 +8,7 @@ This integration consumes the PR 1 supervisor image without changing its runtime
 ghcr.io/andycooney/qbittorrent-pia-runtime:sha-57cb9074d7f5@sha256:85a993530216302f4a04f507e936241c1d1c6468840b4e692980c92b50deb243
 ```
 
-The digest is the OCI index digest published for merge commit `d5ec5c736182deab44c8e591ddf8c9fca3cf2be3`. It is not the attestation-manifest digest. The runtime image defines the supervisor, dynamic endpoint discovery and refresh, firewall, state machine, and session contract in [`QBITTORRENT-PIA-RUNTIME-IMAGE.md`](QBITTORRENT-PIA-RUNTIME-IMAGE.md); this change integrates that contract with the existing application.
+The digest is the OCI index digest published for merge commit `57cb9074d7f5621f0ec7c38173b85a8f1fb5632b`. It is not the attestation-manifest digest. The runtime image defines the supervisor, dynamic endpoint discovery and refresh, firewall, state machine, and session contract in [`QBITTORRENT-PIA-RUNTIME-IMAGE.md`](QBITTORRENT-PIA-RUNTIME-IMAGE.md); this change integrates that contract with the existing application.
 
 ## Startup ordering and identities
 
@@ -42,6 +42,8 @@ The supervisor uses exec probes only:
 - readiness: `/usr/local/bin/pia-runtime readycheck` every five seconds, with one failure removing readiness.
 
 Recoverable PIA outages and failover therefore remain live while pod readiness follows the verified generation. qBittorrent's existing liveness, readiness, and startup probes are unchanged.
+
+The Helm action timeout is 30 minutes. This covers the pod's five-minute graceful shutdown window plus a full six-candidate runtime batch at the default two-minute verification timeout, so endpoint rotation is not rolled back before the supervisor can exhaust its bounded batch.
 
 Offline validation includes shell syntax, deterministic stubbed PF and qBittorrent API flows, secret-redaction assertions, generation race rejection, strict/malformed/mismatched/out-of-range port records, renewal configuration, duplicate-update suppression, and generation changes. Kustomize and app-template renders are inspected for the exact image, init ordering, capabilities, identities, tmpfs volume, credential isolation, `/dev/net/tun`, exec probes, and removal of static session inputs. Repository validation, schema validation, Flux Local, and redacted secret scanning remain required before review.
 
