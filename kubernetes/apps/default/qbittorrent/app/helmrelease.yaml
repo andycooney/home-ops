@@ -17,7 +17,7 @@ spec:
           firewall-init:
             image:
               repository: ghcr.io/andycooney/qbittorrent-pia-runtime
-              tag: sha-b64d67430d9c@sha256:60ba85d3feb69ab795faca5b61af0f950e027f7618291ff98572559806800296
+              tag: sha-cda2423bce15@sha256:2ae414e5a3698ed7d3dc724b5b4e9626be7d33646550ec85dcd1b72b8558ec49
             command:
               - /usr/local/bin/pia-runtime
               - firewall-init
@@ -101,7 +101,7 @@ spec:
           gluetun:
             image:
               repository: ghcr.io/andycooney/qbittorrent-pia-runtime
-              tag: sha-b64d67430d9c@sha256:60ba85d3feb69ab795faca5b61af0f950e027f7618291ff98572559806800296
+              tag: sha-cda2423bce15@sha256:2ae414e5a3698ed7d3dc724b5b4e9626be7d33646550ec85dcd1b72b8558ec49
             env: *runtimeEnv
             envFrom:
               - secretRef:
