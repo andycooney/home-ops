@@ -5,7 +5,6 @@ kind: HelmRelease
 metadata:
   name: zwave
 spec:
-  suspend: true
   chartRef:
     kind: OCIRepository
     name: zwave
