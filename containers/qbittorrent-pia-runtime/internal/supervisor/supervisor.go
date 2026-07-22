@@ -227,7 +227,7 @@ func (s *Supervisor) backoffLoop(ctx context.Context) error {
 		}
 		s.transition(StateBackoff, false)
 		delay := jitter(backoff, s.Now())
-		s.log("recoverable cycle failure; retrying in %s", delay)
+		s.log("recoverable cycle failure classification=%s reason=%s; retrying in %s", failure, err, delay)
 		if err := s.Sleep(ctx, delay); err != nil {
 			break
 		}

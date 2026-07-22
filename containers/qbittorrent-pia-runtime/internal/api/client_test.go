@@ -87,6 +87,25 @@ func TestMalformedAndIncompleteServerLists(t *testing.T) {
 	}
 }
 
+func TestOfflineRegionMayOmitWireGuardEndpoints(t *testing.T) {
+	const value = `{"groups":{"wg":[{"name":"wireguard"}]},"regions":[{"id":"offline","name":"Offline","country":"BO","port_forward":true,"offline":true,"servers":{}},{"id":"online","name":"Online","country":"CA","port_forward":true,"offline":false,"servers":{"wg":[{"ip":"192.0.2.10","cn":"online.example.invalid"}]}}]}`
+	list, err := ParseServerList(strings.NewReader(value))
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates := SelectCandidates(list, nil, nil, time.Unix(1, 0), 6)
+	if len(candidates) != 1 || candidates[0].RegionID != "online" {
+		t.Fatalf("candidates=%#v", candidates)
+	}
+}
+
+func TestOnlineRegionMustIncludeWireGuardEndpoints(t *testing.T) {
+	const value = `{"groups":{"wg":[{"name":"wireguard"}]},"regions":[{"id":"online","name":"Online","country":"CA","port_forward":true,"offline":false,"servers":{}}]}`
+	if _, err := ParseServerList(strings.NewReader(value)); err == nil {
+		t.Fatal("online region without WireGuard endpoints was accepted")
+	}
+}
+
 func TestTokenParsingAndRedaction(t *testing.T) {
 	const username = "fixture-user-sensitive"
 	const password = "fixture-password-sensitive"
