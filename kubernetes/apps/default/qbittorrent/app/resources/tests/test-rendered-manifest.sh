@@ -58,6 +58,7 @@ jq -e --arg image "${expected_runtime_image}" --arg helperImage "${expected_help
     .PIA_RUNTIME_DIR == "/run/pia" and
     .PIA_RUNTIME_LISTEN == "127.0.0.1:8001" and
     .PIA_SERVICE_PORT == "80" and
+    .PIA_TUNNEL_UID == "999" and
     .PIA_TUNNEL_INTERFACE == "tun0" and
     .PIA_TUNNEL_TIMEOUT == "30s"
   ) and

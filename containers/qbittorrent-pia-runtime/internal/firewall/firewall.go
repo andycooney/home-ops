@@ -25,6 +25,7 @@ const (
 type Config struct {
 	AllowedSubnets []netip.Prefix
 	ApplicationUID int
+	TunnelUID      int
 	PFHelperUID    int
 	ServicePort    uint16
 	Interface      string
@@ -96,7 +97,7 @@ func (m Manager) Apply(ctx context.Context, state State, endpoint Endpoint) erro
 }
 
 func Transaction(cfg Config, state State, endpoint Endpoint, ipv6 bool) (string, error) {
-	if cfg.ApplicationUID <= 0 || cfg.PFHelperUID <= 0 || cfg.PFHelperUID == cfg.ApplicationUID || cfg.ServicePort == 0 || cfg.Interface == "" {
+	if cfg.ApplicationUID <= 0 || cfg.TunnelUID <= 0 || cfg.PFHelperUID <= 0 || cfg.TunnelUID == cfg.ApplicationUID || cfg.TunnelUID == cfg.PFHelperUID || cfg.PFHelperUID == cfg.ApplicationUID || cfg.ServicePort == 0 || cfg.Interface == "" {
 		return "", errors.New("invalid firewall configuration")
 	}
 	if state != Bootstrap && state != Selected && state != Verifying && state != Healthy && state != Locked {
@@ -132,6 +133,11 @@ func Transaction(cfg Config, state State, endpoint Endpoint, ipv6 bool) (string,
 		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d -o %s -p tcp -d %s --dport %d -j ACCEPT\n", cfg.PFHelperUID, cfg.Interface, endpoint.PFGateway, PFAPIPort)
 	}
 	fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d -j DROP\n", cfg.PFHelperUID)
+	if (state == Verifying || state == Healthy) && endpoint.IP.Is6() == ipv6 {
+		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d -p udp -d %s --dport %d -j ACCEPT\n", cfg.TunnelUID, endpoint.IP, endpoint.Port)
+		fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d -o %s -j ACCEPT\n", cfg.TunnelUID, cfg.Interface)
+	}
+	fmt.Fprintf(&b, "-A PIA_RUNTIME_OUTPUT -m owner --uid-owner %d -j DROP\n", cfg.TunnelUID)
 	if state == Bootstrap {
 		b.WriteString("-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -p udp --dport 53 -j ACCEPT\n")
 		b.WriteString("-A PIA_RUNTIME_OUTPUT -m owner --uid-owner 0 -p tcp --dport 53 -j ACCEPT\n")
