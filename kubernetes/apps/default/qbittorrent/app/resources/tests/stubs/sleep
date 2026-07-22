@@ -1,7 +1,0 @@
-#!/usr/bin/env sh
-set -eu
-
-if [ -n "${SWITCH_READY_ON_SLEEP:-}" ] && [ ! -e "${SLEEP_SWITCH_MARKER:?}" ]; then
-  : > "${SLEEP_SWITCH_MARKER}"
-  ln -sfn "sessions/${SWITCH_READY_ON_SLEEP}" "${READY_LINK_FOR_TEST:?}"
-fi
