@@ -131,7 +131,7 @@ func selfTest() error {
 		if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 			return errors.New("image self-test requires linux/amd64")
 		}
-		for _, path := range []string{"/gluetun-entrypoint", "/usr/sbin/iptables", "/usr/sbin/ip6tables", "/usr/sbin/iptables-restore", "/usr/sbin/ip6tables-restore", "/usr/sbin/iptables-legacy", "/usr/sbin/ip6tables-legacy", "/usr/sbin/iptables-legacy-restore", "/usr/sbin/ip6tables-legacy-restore", "/etc/ssl/certs/ca-certificates.crt", "/usr/local/share/pia/ca.rsa.4096.crt"} {
+		for _, path := range []string{"/gluetun-entrypoint", "/sbin/ip", "/usr/sbin/iptables", "/usr/sbin/ip6tables", "/usr/sbin/iptables-restore", "/usr/sbin/ip6tables-restore", "/usr/sbin/iptables-legacy", "/usr/sbin/ip6tables-legacy", "/usr/sbin/iptables-legacy-restore", "/usr/sbin/ip6tables-legacy-restore", "/etc/ssl/certs/ca-certificates.crt", "/usr/local/share/pia/ca.rsa.4096.crt"} {
 			if info, err := os.Stat(filepath.Clean(path)); err != nil || info.IsDir() {
 				return fmt.Errorf("required base-image file missing: %s", path)
 			}

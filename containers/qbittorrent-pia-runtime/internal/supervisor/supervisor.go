@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -143,6 +144,7 @@ type Supervisor struct {
 	cycle           func(context.Context, netip.Addr) error
 	attempt         func(context.Context, api.Candidate, netip.Addr) error
 	generateKeyPair func() (wireguard.KeyPair, error)
+	cleanupNetwork  func(string) error
 }
 
 func (s *Supervisor) Run(ctx context.Context) error {
@@ -542,13 +544,20 @@ func (s *Supervisor) lockAndStop(cause error) error {
 	s.pfPort = 0
 	lockErr := s.Firewall.Apply(context.Background(), firewall.Locked, firewall.Endpoint{})
 	stopErr := s.stopChild()
+	var networkErr error
+	if stopErr == nil {
+		networkErr = s.removeTunnelNetwork()
+	}
 	if lockErr != nil {
 		lockErr = fmt.Errorf("apply locked firewall: %w", lockErr)
 	}
 	if stopErr != nil {
 		stopErr = fmt.Errorf("stop Gluetun child: %w", stopErr)
 	}
-	return errors.Join(cause, lockErr, stopErr)
+	if networkErr != nil {
+		networkErr = fmt.Errorf("remove tunnel network state: %w", networkErr)
+	}
+	return errors.Join(cause, lockErr, stopErr, networkErr)
 }
 
 func (s *Supervisor) stopChild() error {
@@ -584,8 +593,12 @@ func (s *Supervisor) deactivate(state State) error {
 	if lockErr == nil {
 		stopErr = s.stopChild()
 	}
+	var networkErr error
+	if stopErr == nil {
+		networkErr = s.removeTunnelNetwork()
+	}
 	var removeErr error
-	if s.current != "" && stopErr == nil && readyErr == nil && currentErr == nil {
+	if s.current != "" && stopErr == nil && networkErr == nil && readyErr == nil && currentErr == nil {
 		removeErr = s.Publisher.Remove(s.current)
 		if removeErr == nil {
 			s.current = ""
@@ -603,12 +616,50 @@ func (s *Supervisor) deactivate(state State) error {
 	if stopErr != nil {
 		stopErr = fmt.Errorf("stop Gluetun child: %w", stopErr)
 	}
+	if networkErr != nil {
+		networkErr = fmt.Errorf("remove tunnel network state: %w", networkErr)
+	}
 	if removeErr != nil {
 		removeErr = fmt.Errorf("remove generation: %w", removeErr)
 	}
-	result := errors.Join(lockErr, readyErr, currentErr, stopErr, removeErr)
+	result := errors.Join(lockErr, readyErr, currentErr, stopErr, networkErr, removeErr)
 	if result == nil {
 		s.cleanupRequired = false
+	}
+	return result
+}
+
+func (s *Supervisor) removeTunnelNetwork() error {
+	if s.Config.Interface == "" {
+		return nil
+	}
+	cleanup := cleanupTunnelNetwork
+	if s.cleanupNetwork != nil {
+		cleanup = s.cleanupNetwork
+	}
+	return cleanup(s.Config.Interface)
+}
+
+func cleanupTunnelNetwork(interfaceName string) error {
+	var result error
+	for _, family := range []string{"-4", "-6"} {
+		output, err := exec.Command("/sbin/ip", family, "rule", "show", "priority", "101").Output()
+		if err != nil {
+			result = errors.Join(result, fmt.Errorf("inspect %s WireGuard rule: %w", family, err))
+			continue
+		}
+		if strings.TrimSpace(string(output)) == "" {
+			continue
+		}
+		if err := exec.Command("/sbin/ip", family, "rule", "delete", "priority", "101").Run(); err != nil {
+			result = errors.Join(result, fmt.Errorf("delete %s WireGuard rule: %w", family, err))
+		}
+	}
+	if _, err := net.InterfaceByName(interfaceName); err != nil {
+		return result
+	}
+	if err := exec.Command("/sbin/ip", "link", "delete", "dev", interfaceName).Run(); err != nil {
+		result = errors.Join(result, fmt.Errorf("delete tunnel interface: %w", err))
 	}
 	return result
 }

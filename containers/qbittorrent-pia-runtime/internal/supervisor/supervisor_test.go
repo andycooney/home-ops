@@ -1108,6 +1108,68 @@ func TestFailoverAndShutdownSurfaceAllSecurityErrors(t *testing.T) {
 	}
 }
 
+func TestFailoverRemovesTunnelNetworkBeforeGeneration(t *testing.T) {
+	var events []string
+	fw := &fakeFirewall{events: &events}
+	publisher := &fakePublisher{events: &events}
+	child := &fakeChild{done: make(chan error), events: &events}
+	s := Supervisor{
+		Config:    config.Config{Interface: "tun0", ShutdownGrace: time.Second},
+		Firewall:  fw,
+		Publisher: publisher,
+		Status:    health.NewStatus(),
+		child:     child,
+		current:   "gen-one",
+		cleanupNetwork: func(interfaceName string) error {
+			if interfaceName != "tun0" {
+				t.Fatalf("interface=%q", interfaceName)
+			}
+			events = append(events, "remove-tunnel-network")
+			return nil
+		},
+	}
+	if err := s.deactivate(StateFailingOver); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(events, ",") != "firewall:LOCKED,invalidate-ready,invalidate-current,stop-child,remove-tunnel-network,remove" {
+		t.Fatalf("events=%v", events)
+	}
+	if s.child != nil || s.current != "" || s.cleanupRequired {
+		t.Fatalf("child=%v current=%q cleanup=%v", s.child, s.current, s.cleanupRequired)
+	}
+}
+
+func TestTunnelNetworkCleanupFailureRetainsGenerationAndRetries(t *testing.T) {
+	calls := 0
+	publisher := &fakePublisher{}
+	s := Supervisor{
+		Config:    config.Config{Interface: "tun0", ShutdownGrace: time.Second},
+		Firewall:  &fakeFirewall{},
+		Publisher: publisher,
+		Status:    health.NewStatus(),
+		child:     &fakeChild{done: make(chan error)},
+		current:   "gen-one",
+		Now:       func() time.Time { return time.Unix(1, 0) },
+		Sleep:     func(context.Context, time.Duration) error { return nil },
+		cleanupNetwork: func(string) error {
+			calls++
+			if calls == 1 {
+				return errors.New("network cleanup failed")
+			}
+			return nil
+		},
+	}
+	if err := s.deactivate(StateFailingOver); err == nil || !strings.Contains(err.Error(), "network cleanup failed") || !s.cleanupRequired || s.current != "gen-one" || publisher.removed != 0 {
+		t.Fatalf("error=%v cleanup=%v current=%q removals=%d", err, s.cleanupRequired, s.current, publisher.removed)
+	}
+	if err := s.retryCandidateCleanup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || s.current != "" || s.cleanupRequired || publisher.removed != 1 {
+		t.Fatalf("calls=%d current=%q cleanup=%v removals=%d", calls, s.current, s.cleanupRequired, publisher.removed)
+	}
+}
+
 func TestStopChildRetainsUnconfirmedProcessAndCleanupRetries(t *testing.T) {
 	t.Run("stopChild retains handle", func(t *testing.T) {
 		child := &fakeChild{done: make(chan error), stopErrors: []error{errors.New("signal failed"), nil}}
