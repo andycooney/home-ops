@@ -138,7 +138,7 @@ func (v Verifier) Verify(ctx context.Context, preTunnelIP netip.Addr) (Result, e
 	if _, err := resolver.LookupHost(ctx, dnsName); err != nil {
 		return Result{}, errors.New("tunneled DNS failed")
 	}
-	dialer := &net.Dialer{Timeout: v.Timeout, Control: control}
+	dialer := &net.Dialer{Timeout: v.Timeout, Control: control, Resolver: resolver}
 	transport := &http.Transport{DisableKeepAlives: true, DialContext: dialer.DialContext, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: v.RootCAs}}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: v.Timeout}
