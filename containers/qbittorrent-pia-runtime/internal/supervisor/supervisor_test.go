@@ -673,6 +673,50 @@ func TestGlobalTokenFailureEntersOuterBackoffAfterOneAttempt(t *testing.T) {
 	}
 }
 
+func TestAccountTokenIsReusedUntilEarlyRefreshWindow(t *testing.T) {
+	now := time.Unix(100, 0)
+	client := &classifiedAPI{}
+	s := Supervisor{
+		Config: config.Config{Username: "fixture-user-sensitive", Password: "fixture-password-sensitive"},
+		API:    client,
+		Now:    func() time.Time { return now },
+	}
+	first, err := s.token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second || strings.Join(client.events, ",") != "token" {
+		t.Fatalf("tokens differ or token endpoint was called repeatedly: events=%v", client.events)
+	}
+	now = now.Add(tokenReuseLifetime)
+	if _, err := s.token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(client.events, ",") != "token,token" {
+		t.Fatalf("expired token was not refreshed: events=%v", client.events)
+	}
+}
+
+func TestRegistrationAuthenticationRejectionInvalidatesCachedToken(t *testing.T) {
+	client := &classifiedAPI{
+		registerErrors: map[string]error{"192.0.2.1": &api.AuthError{Err: errors.New("rejected")}},
+	}
+	s, _, _, _ := newClassificationSupervisor(client)
+	err := s.attemptCandidate(context.Background(), api.Candidate{
+		RegionID: "ca", IP: "192.0.2.1", Hostname: "ca-1.example.invalid", Port: 1337,
+	}, netip.MustParseAddr("198.51.100.1"))
+	if err == nil || classifyFailure(err) != failureGlobal {
+		t.Fatalf("error=%v class=%v", err, classifyFailure(err))
+	}
+	if s.authToken != "" || !s.authTokenExpiry.IsZero() {
+		t.Fatal("rejected account token remained cached")
+	}
+}
+
 func TestLocalFailuresDoNotCoolOrContinueCandidateBatch(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -710,25 +754,25 @@ func TestLocalFailuresDoNotCoolOrContinueCandidateBatch(t *testing.T) {
 
 func TestCandidateFailuresCoolOnlyAffectedEndpointAndContinueDistinctly(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		setup func(*classifiedAPI)
-		want  string
+		name      string
+		setup     func(*classifiedAPI)
+		want      string
+		wantClass failureClass
 	}{
 		{name: "probe", setup: func(client *classifiedAPI) {
 			client.probeErrors = map[string]error{"192.0.2.1": errors.New("probe failed")}
 			client.tokenErrors = []error{errors.New("global stop")}
-		}, want: "metadata,probe:192.0.2.1,probe:192.0.2.2,token"},
+		}, want: "metadata,probe:192.0.2.1,probe:192.0.2.2,token", wantClass: failureGlobal},
 		{name: "registration", setup: func(client *classifiedAPI) {
 			client.registerErrors = map[string]error{"192.0.2.1": errors.New("registration failed")}
-			client.tokenErrors = []error{nil, errors.New("global stop")}
-		}, want: "metadata,probe:192.0.2.1,token,register:192.0.2.1,probe:192.0.2.2,token"},
+		}, want: "metadata,probe:192.0.2.1,token,register:192.0.2.1,probe:192.0.2.2,register:192.0.2.2", wantClass: failureLocal},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &classifiedAPI{count: 3}
 			tc.setup(client)
 			s, _, _, _ := newClassificationSupervisor(client)
 			err := s.runCycle(context.Background(), netip.MustParseAddr("198.51.100.1"))
-			if err == nil || classifyFailure(err) != failureGlobal {
+			if err == nil || classifyFailure(err) != tc.wantClass {
 				t.Fatalf("error=%v class=%v", err, classifyFailure(err))
 			}
 			if strings.Join(client.events, ",") != tc.want {
