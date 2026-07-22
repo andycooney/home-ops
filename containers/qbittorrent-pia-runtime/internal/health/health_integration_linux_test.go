@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -57,11 +58,20 @@ func TestOfflineTunnelBoundDNSHTTPSAndActivity(t *testing.T) {
 	}()
 	https := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ip=192.0.2.55\n")) }))
 	defer https.Close()
+	httpsURL, err := url.Parse(https.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, httpsPort, err := net.SplitHostPort(httpsURL.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpsURL.Host = net.JoinHostPort("example.com", httpsPort)
 	pool := x509.NewCertPool()
 	pool.AddCert(https.Certificate())
 	var controlCalls atomic.Int32
 	control := func(string, string, syscall.RawConn) error { controlCalls.Add(1); return nil }
-	verifier := Verifier{Interface: "lo", DNSAddress: dns.LocalAddr().String(), DNSName: "health.test", HTTPSURL: https.URL, Timeout: 3 * time.Second, RootCAs: pool, Control: control}
+	verifier := Verifier{Interface: "lo", DNSAddress: dns.LocalAddr().String(), DNSName: "health.test", HTTPSURL: httpsURL.String(), Timeout: 3 * time.Second, RootCAs: pool, Control: control}
 	result, err := verifier.Verify(context.Background(), netip.MustParseAddr("198.51.100.1"))
 	if err != nil {
 		t.Fatal(err)
