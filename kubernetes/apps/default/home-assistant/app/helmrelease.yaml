@@ -5,7 +5,6 @@ kind: HelmRelease
 metadata:
   name: home-assistant
 spec:
-  suspend: true
   chartRef:
     kind: OCIRepository
     name: home-assistant
