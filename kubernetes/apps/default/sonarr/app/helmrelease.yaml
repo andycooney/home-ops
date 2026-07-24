@@ -94,9 +94,7 @@ spec:
         globalMounts:
           - readOnly: true
       media:
-        type: nfs
-        server: storage.cooney.site
-        path: /mnt/bytebarn/media/tv
+        existingClaim: sonarr-media
         globalMounts:
           - path: /media/tv
       unprocessed:
