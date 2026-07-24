@@ -5,7 +5,6 @@ kind: HelmRelease
 metadata:
   name: seerr
 spec:
-  suspend: true
   chartRef:
     kind: OCIRepository
     name: seerr
