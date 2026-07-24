@@ -5,7 +5,6 @@ kind: HelmRelease
 metadata:
   name: tautulli
 spec:
-  suspend: true
   chartRef:
     kind: OCIRepository
     name: tautulli
