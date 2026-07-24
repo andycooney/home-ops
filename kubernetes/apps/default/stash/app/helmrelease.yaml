@@ -87,13 +87,11 @@ spec:
         globalMounts:
           - path: /config
       media:
-        type: nfs
-        server: storage.cooney.site
-        path: /mnt/bytebarn/media
+        existingClaim: stash-media
         advancedMounts:
           stash:
             app:
-              - path: /media
+              - path: /media/adult
                 readOnly: true
       unprocessed:
         type: nfs
