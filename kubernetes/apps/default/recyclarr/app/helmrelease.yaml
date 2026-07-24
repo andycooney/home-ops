@@ -5,6 +5,7 @@ kind: HelmRelease
 metadata:
   name: recyclarr
 spec:
+  suspend: true
   chartRef:
     kind: OCIRepository
     name: recyclarr
