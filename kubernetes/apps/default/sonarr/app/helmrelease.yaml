@@ -96,7 +96,7 @@ spec:
       media:
         existingClaim: sonarr-media
         globalMounts:
-          - path: /media/tv
+          - path: /media/tvshows
       unprocessed:
         type: nfs
         server: storage.cooney.site
