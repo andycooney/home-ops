@@ -96,9 +96,9 @@ spec:
       media:
         type: nfs
         server: storage.cooney.site
-        path: /mnt/bytebarn/media
+        path: /mnt/bytebarn/media/tv
         globalMounts:
-          - path: /media
+          - path: /media/tv
       unprocessed:
         type: nfs
         server: storage.cooney.site
