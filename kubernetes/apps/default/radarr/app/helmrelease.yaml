@@ -88,11 +88,9 @@ spec:
       config:
         existingClaim: "{{ .Release.Name }}"
       media:
-        type: nfs
-        server: storage.cooney.site
-        path: /mnt/bytebarn/media
+        existingClaim: radarr-media
         globalMounts:
-          - path: /media
+          - path: /media/movies
       unprocessed:
         type: nfs
         server: storage.cooney.site
