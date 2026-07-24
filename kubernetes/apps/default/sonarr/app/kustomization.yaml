@@ -5,6 +5,7 @@ kind: Kustomization
 resources:
   - ./externalsecret.yaml
   - ./helmrelease.yaml
+  - ./media-pvc.yaml
   - ./ocirepository.yaml
 configMapGenerator:
   - name: sonarr-configmap
