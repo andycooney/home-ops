@@ -5,7 +5,6 @@ kind: HelmRelease
 metadata:
   name: stash
 spec:
-  suspend: true
   chartRef:
     kind: OCIRepository
     name: stash

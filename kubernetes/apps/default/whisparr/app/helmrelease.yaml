@@ -5,7 +5,6 @@ kind: HelmRelease
 metadata:
   name: whisparr
 spec:
-  suspend: true
   chartRef:
     kind: OCIRepository
     name: whisparr

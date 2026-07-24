@@ -5,7 +5,6 @@ kind: HelmRelease
 metadata:
   name: radarr
 spec:
-  suspend: true
   chartRef:
     kind: OCIRepository
     name: radarr
