@@ -119,14 +119,26 @@ func ParseServerList(r io.Reader) (ServerList, error) {
 	return list, nil
 }
 
-func SelectCandidates(list ServerList, preferred []string, cooldown map[string]time.Time, now time.Time, max int) []Candidate {
+func SelectCandidates(list ServerList, preferred, allowedCountries []string, requirePortForwarding bool, cooldown map[string]time.Time, now time.Time, max int) []Candidate {
 	preference := make(map[string]int, len(preferred))
 	for i, id := range preferred {
 		preference[strings.ToLower(id)] = i
 	}
+	countries := make(map[string]struct{}, len(allowedCountries))
+	for _, country := range allowedCountries {
+		countries[strings.ToUpper(country)] = struct{}{}
+	}
 	var candidates []Candidate
 	for _, region := range list.Regions {
-		if strings.EqualFold(region.Country, "US") || region.PortForward == nil || !*region.PortForward || region.Offline == nil || *region.Offline {
+		if region.Offline == nil || *region.Offline {
+			continue
+		}
+		if len(countries) != 0 {
+			if _, allowed := countries[strings.ToUpper(region.Country)]; !allowed {
+				continue
+			}
+		}
+		if requirePortForwarding && (strings.EqualFold(region.Country, "US") || region.PortForward == nil || !*region.PortForward) {
 			continue
 		}
 		for _, endpoint := range region.Servers.WG {

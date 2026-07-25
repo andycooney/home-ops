@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -256,7 +257,20 @@ func (s *Supervisor) runCycle(ctx context.Context, preTunnelIP netip.Addr) error
 	if err != nil {
 		return err
 	}
-	candidates := api.SelectCandidates(list, s.Config.PreferredRegions, s.cooldown, s.Now(), s.Config.CandidateMax)
+	selectionLimit := s.Config.CandidateMax
+	if s.Config.DisablePortForwarding {
+		selectionLimit = 0
+	}
+	candidates := api.SelectCandidates(list, s.Config.PreferredRegions, s.Config.AllowedCountries, !s.Config.DisablePortForwarding, s.cooldown, s.Now(), selectionLimit)
+	if s.Config.DisablePortForwarding {
+		candidates, err = s.rankCandidatesByLatency(ctx, candidates)
+		if err != nil {
+			return err
+		}
+		if s.Config.CandidateMax > 0 && len(candidates) > s.Config.CandidateMax {
+			candidates = candidates[:s.Config.CandidateMax]
+		}
+	}
 	s.log("eligible candidate count=%d", len(candidates))
 	if len(candidates) == 0 {
 		return errors.New("no eligible candidates")
@@ -319,6 +333,44 @@ func (s *Supervisor) runCycle(ctx context.Context, preTunnelIP netip.Addr) error
 		return fmt.Errorf("candidate minimum not reached: attempted %d of %d: %w", attempts, requiredAttempts, lastErr)
 	}
 	return fmt.Errorf("candidate attempts exhausted after %d attempts (minimum %d): %w", attempts, requiredAttempts, lastErr)
+}
+
+func (s *Supervisor) rankCandidatesByLatency(ctx context.Context, candidates []api.Candidate) ([]api.Candidate, error) {
+	type rankedCandidate struct {
+		candidate api.Candidate
+		latency   time.Duration
+	}
+	ranked := make([]rankedCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		endpoint := firewall.Endpoint{IP: netip.MustParseAddr(candidate.IP), Port: candidate.Port}
+		if err := s.Firewall.Apply(ctx, firewall.Selected, endpoint); err != nil {
+			return nil, localFailure(fmt.Errorf("allow latency probe: %w", err))
+		}
+		started := s.Now()
+		probeErr := s.API.Probe(ctx, candidate)
+		latency := s.Now().Sub(started)
+		if err := s.Firewall.Apply(ctx, firewall.Bootstrap, firewall.Endpoint{}); err != nil {
+			return nil, localFailure(fmt.Errorf("restore bootstrap firewall after latency probe: %w", err))
+		}
+		if probeErr != nil {
+			s.cool(candidate)
+			s.log("latency probe failed region_id=%s advertised_ip=%s", candidate.RegionID, candidate.IP)
+			continue
+		}
+		ranked = append(ranked, rankedCandidate{candidate: candidate, latency: latency})
+		s.log("latency probe succeeded region_id=%s advertised_ip=%s latency=%s", candidate.RegionID, candidate.IP, latency)
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		return ranked[i].latency < ranked[j].latency
+	})
+	result := make([]api.Candidate, 0, len(ranked))
+	for _, candidate := range ranked {
+		result = append(result, candidate.candidate)
+	}
+	if len(result) == 0 {
+		return nil, errors.New("no candidate passed latency probing")
+	}
+	return result, nil
 }
 
 func (s *Supervisor) retryCandidateCleanup(ctx context.Context) error {
@@ -488,8 +540,10 @@ func (s *Supervisor) monitorHealthy(ctx context.Context, candidate api.Candidate
 					return localFailure(err)
 				}
 			}
-			if err := s.syncForwardedPort(ctx, endpoint); err != nil {
-				return localFailure(err)
+			if !s.Config.DisablePortForwarding {
+				if err := s.syncForwardedPort(ctx, endpoint); err != nil {
+					return localFailure(err)
+				}
 			}
 			continue
 		}

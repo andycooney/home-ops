@@ -14,11 +14,39 @@ func TestLoadDefaultsAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.CandidateMin != 3 || cfg.CandidateMax != 6 || cfg.HealthFailures != 4 || cfg.HealthInterval != 15*time.Second || cfg.TunnelUID != 999 || cfg.PFHelperUID != 65532 {
+	if cfg.CandidateMin != 3 || cfg.CandidateMax != 6 || cfg.HealthFailures != 4 || cfg.HealthInterval != 15*time.Second || cfg.TunnelUID != 999 || cfg.PFHelperUID != 65532 || cfg.DisablePortForwarding {
 		t.Fatalf("unexpected defaults: %#v", cfg)
 	}
 	if len(cfg.AllowedSubnets) != 2 {
 		t.Fatalf("allowed subnets=%d", len(cfg.AllowedSubnets))
+	}
+}
+
+func TestPortForwardingAndCountrySelection(t *testing.T) {
+	t.Setenv("PIA_USERNAME", "user-fixture")
+	t.Setenv("PIA_PASSWORD", "password-fixture")
+	t.Setenv("PIA_PORT_FORWARDING", "false")
+	t.Setenv("PIA_ALLOWED_COUNTRIES", "US,CA")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.DisablePortForwarding || strings.Join(cfg.AllowedCountries, ",") != "US,CA" {
+		t.Fatalf("unexpected reusable mode: %#v", cfg)
+	}
+}
+
+func TestRejectsInvalidPortForwardingAndCountryConfiguration(t *testing.T) {
+	t.Setenv("PIA_USERNAME", "user-fixture")
+	t.Setenv("PIA_PASSWORD", "password-fixture")
+	t.Setenv("PIA_PORT_FORWARDING", "sometimes")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PIA_PORT_FORWARDING") {
+		t.Fatalf("error=%v", err)
+	}
+	t.Setenv("PIA_PORT_FORWARDING", "false")
+	t.Setenv("PIA_ALLOWED_COUNTRIES", "us")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PIA_ALLOWED_COUNTRIES") {
+		t.Fatalf("error=%v", err)
 	}
 }
 

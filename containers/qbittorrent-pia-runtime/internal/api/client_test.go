@@ -50,7 +50,7 @@ func TestCandidateFilteringOrderingCooldownAndBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Unix(1_700_000_000, 0)
-	candidates := SelectCandidates(list, []string{"uk_london", "ca_ontario"}, map[string]time.Time{"192.0.2.12": now.Add(time.Hour)}, now, 2)
+	candidates := SelectCandidates(list, []string{"uk_london", "ca_ontario"}, nil, true, map[string]time.Time{"192.0.2.12": now.Add(time.Hour)}, now, 2)
 	if len(candidates) != 2 {
 		t.Fatalf("candidate count=%d", len(candidates))
 	}
@@ -73,7 +73,7 @@ func TestCandidateSelectionDeduplicatesEndpointIPs(t *testing.T) {
 			{ID: "ca_two", Name: "Canada Two", Country: "CA", PortForward: &pf, Offline: &offline, Servers: Servers{WG: []Endpoint{{IP: "192.0.2.1", Hostname: "duplicate.example.invalid"}, {IP: "192.0.2.2", Hostname: "two.example.invalid"}}}},
 		},
 	}
-	candidates := SelectCandidates(list, nil, nil, time.Unix(1, 0), 6)
+	candidates := SelectCandidates(list, nil, nil, true, nil, time.Unix(1, 0), 6)
 	if len(candidates) != 2 || candidates[0].IP == candidates[1].IP {
 		t.Fatalf("candidates=%#v", candidates)
 	}
@@ -93,9 +93,25 @@ func TestOfflineRegionMayOmitWireGuardEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidates := SelectCandidates(list, nil, nil, time.Unix(1, 0), 6)
+	candidates := SelectCandidates(list, nil, nil, true, nil, time.Unix(1, 0), 6)
 	if len(candidates) != 1 || candidates[0].RegionID != "online" {
 		t.Fatalf("candidates=%#v", candidates)
+	}
+}
+
+func TestCandidateSelectionWithoutPortForwardingAllowsUSAndCountryFilter(t *testing.T) {
+	list, err := ParseServerList(fixture(t, "server-list.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates := SelectCandidates(list, nil, []string{"US"}, false, nil, time.Unix(1, 0), 0)
+	if len(candidates) == 0 {
+		t.Fatal("US candidates were excluded when port forwarding was disabled")
+	}
+	for _, candidate := range candidates {
+		if candidate.Country != "US" {
+			t.Fatalf("country filter admitted %#v", candidate)
+		}
 	}
 }
 

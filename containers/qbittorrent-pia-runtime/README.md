@@ -1,8 +1,8 @@
-# qBittorrent PIA runtime image
+# Reusable PIA WireGuard runtime image
 
-This directory builds a linux/amd64 Gluetun-derived image whose PID 1 is a purpose-built PIA WireGuard supervisor. It reuses the PIA account token for up to 23 hours while creating a fresh WireGuard keypair and session for every generation, owns the namespace firewall, verifies tunneled traffic, and starts `/gluetun-entrypoint` only as its supervised child.
+This directory builds a linux/amd64 Gluetun-derived image whose PID 1 is a reusable PIA WireGuard supervisor. It reuses the PIA account token for up to 23 hours while creating a fresh WireGuard keypair and session for every generation, owns the namespace firewall, verifies tunneled traffic, and starts `/gluetun-entrypoint` only as its supervised child. The historical directory and image name are retained so existing immutable qBittorrent deployments do not need a disruptive migration.
 
-The image is intentionally not wired into Kubernetes in this PR. PR 2 must supply a tmpfs at `/run/pia`, credentials, capabilities, subnet policy, probes, and the PF helper integration.
+Each Kubernetes consumer must supply a tmpfs at `/run/pia`, credentials, capabilities, subnet policy, and exec probes. Port-forwarding consumers additionally supply the unprivileged PF helper integration.
 
 ## Commands
 
@@ -12,7 +12,7 @@ The image is intentionally not wired into Kubernetes in this PR. PR 2 must suppl
 - `pia-runtime healthcheck` checks supervisor liveness only. Recoverable PIA failures remain live but not ready.
 - `pia-runtime readycheck` checks the separate local readiness endpoint for an exec-compatible Kubernetes probe.
 
-HTTP probe paths are `/live` and `/ready` on `0.0.0.0:8001` by default. The check commands use only `127.0.0.1:8001`, reject redirects, and have a two-second timeout. PR 2 must use exec probes; the firewall does not expose port 8001 for remote probing.
+HTTP probe paths are `/live` and `/ready` on `0.0.0.0:8001` by default. The check commands use only `127.0.0.1:8001`, reject redirects, and have a two-second timeout. Consumers must use exec probes; the firewall does not expose port 8001 for remote probing.
 
 ## Required runtime contract
 
@@ -25,6 +25,8 @@ Useful non-secret settings:
 | Variable | Default | Meaning |
 |---|---:|---|
 | `PIA_PREFERRED_REGIONS` | empty | Ordered comma-separated PIA region IDs |
+| `PIA_ALLOWED_COUNTRIES` | empty | Optional comma-separated uppercase ISO alpha-2 country allowlist |
+| `PIA_PORT_FORWARDING` | `true` | Require a forwarding-capable non-US region and synchronize a helper-published port; when `false`, US regions are eligible, candidates are latency-ranked, and no PF helper is required |
 | `PIA_ALLOWED_SUBNETS` | empty | Explicit non-WAN CIDRs required by the pod contract |
 | `PIA_TUNNEL_UID` | `999` | Isolated Gluetun and userspace WireGuard identity |
 | `PIA_PF_HELPER_UID` | `65532` | Unprivileged PF helper identity |

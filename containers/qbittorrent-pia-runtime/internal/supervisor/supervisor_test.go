@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/netip"
 	"os"
@@ -119,6 +120,7 @@ func (f *fakeFirewall) Apply(_ context.Context, state firewall.State, endpoint f
 
 type fakePublisher struct {
 	ready, invalidated, currentInvalidated, published int
+	pfReads                                           int
 	pfPort                                            uint16
 	pfErr                                             error
 	publishCurrentErr                                 error
@@ -144,6 +146,7 @@ func (p *fakePublisher) PublishReady(string) error {
 	return p.publishReadyErr
 }
 func (p *fakePublisher) ReadForwardedPort(string) (uint16, error) {
+	p.pfReads++
 	if p.pfPort == 0 && p.pfErr == nil {
 		return 0, session.ErrPFPortPending
 	}
@@ -180,6 +183,12 @@ type bootstrapAPI struct {
 }
 
 type cycleAPI struct{}
+
+type latencyAPI struct {
+	now      *time.Time
+	latency  map[string]time.Duration
+	failures map[string]error
+}
 
 type candidateListAPI struct{ count int }
 
@@ -286,6 +295,20 @@ func (cycleAPI) Register(context.Context, api.Candidate, string, string) (wiregu
 		return wireguard.Registration{}, err
 	}
 	return wireguard.Registration{PeerIP: "10.0.0.2/32", ServerKey: keys.Public, ServerIP: "192.0.2.20", ServerVIP: "10.0.0.1", ServerPort: 1337, DNSServers: []string{"10.0.0.1"}}, nil
+}
+
+func (a *latencyAPI) FetchServerList(context.Context) (api.ServerList, error) {
+	return api.ServerList{}, errors.New("unexpected server-list request")
+}
+func (a *latencyAPI) Probe(_ context.Context, candidate api.Candidate) error {
+	*a.now = a.now.Add(a.latency[candidate.IP])
+	return a.failures[candidate.IP]
+}
+func (a *latencyAPI) Token(context.Context, string, string) (string, error) {
+	return "", errors.New("unexpected token request")
+}
+func (a *latencyAPI) Register(context.Context, api.Candidate, string, string) (wireguard.Registration, error) {
+	return wireguard.Registration{}, errors.New("unexpected registration")
 }
 
 func (a *bootstrapAPI) FetchServerList(context.Context) (api.ServerList, error) {
@@ -1007,6 +1030,78 @@ func TestPFPortSynchronizationAndHealthFailureRemoval(t *testing.T) {
 	}
 	if s.pfPort != 0 || fw.endpoints[len(fw.endpoints)-1].ForwardedPort != 0 {
 		t.Fatal("stale PF data did not revoke the inbound allowance")
+	}
+}
+
+func TestDisabledPortForwardingRanksCandidatesAndSkipsFailedProbes(t *testing.T) {
+	now := time.Unix(1, 0)
+	fw := &fakeFirewall{}
+	client := &latencyAPI{
+		now: &now,
+		latency: map[string]time.Duration{
+			"192.0.2.1": 80 * time.Millisecond,
+			"192.0.2.2": 10 * time.Millisecond,
+			"192.0.2.3": 20 * time.Millisecond,
+		},
+		failures: map[string]error{"192.0.2.3": errors.New("probe failed")},
+	}
+	s := Supervisor{
+		API:      client,
+		Firewall: fw,
+		Now:      func() time.Time { return now },
+		Logger:   log.New(io.Discard, "", 0),
+		cooldown: make(map[string]time.Time),
+	}
+	candidates := []api.Candidate{
+		{RegionID: "slow", IP: "192.0.2.1", Hostname: "slow.example.invalid", Port: 1337},
+		{RegionID: "fast", IP: "192.0.2.2", Hostname: "fast.example.invalid", Port: 1337},
+		{RegionID: "failed", IP: "192.0.2.3", Hostname: "failed.example.invalid", Port: 1337},
+	}
+	ranked, err := s.rankCandidatesByLatency(context.Background(), candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ranked) != 2 || ranked[0].RegionID != "fast" || ranked[1].RegionID != "slow" {
+		t.Fatalf("ranked candidates=%#v", ranked)
+	}
+	if _, cooled := s.cooldown["192.0.2.3"]; !cooled {
+		t.Fatal("failed latency probe was not cooled")
+	}
+	if strings.Join(firewallStates(fw.states), ",") != "SELECTED,BOOTSTRAP,SELECTED,BOOTSTRAP,SELECTED,BOOTSTRAP" {
+		t.Fatalf("firewall states=%v", fw.states)
+	}
+}
+
+func TestDisabledPortForwardingNeverReadsForwardedPort(t *testing.T) {
+	now := time.Unix(1, 0)
+	publisher := &fakePublisher{pfPort: 49152}
+	status := health.NewStatus()
+	status.Set(string(StateHealthy), true)
+	s := Supervisor{
+		Config: config.Config{
+			DisablePortForwarding: true,
+			HealthInterval:        time.Second,
+			HealthFailures:        4,
+			SessionMaxAge:         time.Hour,
+		},
+		Verifier:  &fakeVerifier{},
+		Firewall:  &fakeFirewall{},
+		Publisher: publisher,
+		Status:    status,
+		child:     &fakeChild{done: make(chan error)},
+		current:   "gen",
+		Now:       func() time.Time { return now },
+		Sleep: func(context.Context, time.Duration) error {
+			now = now.Add(time.Hour)
+			return nil
+		},
+	}
+	err := s.monitorHealthy(context.Background(), api.Candidate{RegionID: "us"}, activeEndpoint(), netip.MustParseAddr("198.51.100.1"))
+	if err == nil || !strings.Contains(err.Error(), "proactive session rotation") {
+		t.Fatalf("error=%v", err)
+	}
+	if publisher.pfReads != 0 || s.pfPort != 0 {
+		t.Fatalf("forwarded-port reads=%d active-port=%d", publisher.pfReads, s.pfPort)
 	}
 }
 

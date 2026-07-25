@@ -20,31 +20,33 @@ const (
 )
 
 type Config struct {
-	Username, Password string
-	PreferredRegions   []string
-	AllowedSubnets     []netip.Prefix
-	ServerListURL      string
-	TokenURL           string
-	PublicIPURL        string
-	CACertPath         string
-	RuntimeDir         string
-	ListenAddress      string
-	GluetunEntrypoint  string
-	Interface          string
-	ApplicationUID     int
-	TunnelUID          int
-	PFHelperUID        int
-	ReaderGID          int
-	ServicePort        uint16
-	CandidateMin       int
-	CandidateMax       int
-	ProbeTimeout       time.Duration
-	TunnelTimeout      time.Duration
-	HealthInterval     time.Duration
-	HealthFailures     int
-	AuthRetry          time.Duration
-	SessionMaxAge      time.Duration
-	ShutdownGrace      time.Duration
+	Username, Password    string
+	PreferredRegions      []string
+	AllowedCountries      []string
+	AllowedSubnets        []netip.Prefix
+	DisablePortForwarding bool
+	ServerListURL         string
+	TokenURL              string
+	PublicIPURL           string
+	CACertPath            string
+	RuntimeDir            string
+	ListenAddress         string
+	GluetunEntrypoint     string
+	Interface             string
+	ApplicationUID        int
+	TunnelUID             int
+	PFHelperUID           int
+	ReaderGID             int
+	ServicePort           uint16
+	CandidateMin          int
+	CandidateMax          int
+	ProbeTimeout          time.Duration
+	TunnelTimeout         time.Duration
+	HealthInterval        time.Duration
+	HealthFailures        int
+	AuthRetry             time.Duration
+	SessionMaxAge         time.Duration
+	ShutdownGrace         time.Duration
 }
 
 func Load() (Config, error) { return load(true) }
@@ -56,6 +58,7 @@ func load(requireCredentials bool) (Config, error) {
 		Username:          first("PIA_USERNAME", "VPN_PORT_FORWARDING_USERNAME"),
 		Password:          first("PIA_PASSWORD", "VPN_PORT_FORWARDING_PASSWORD"),
 		PreferredRegions:  csv(os.Getenv("PIA_PREFERRED_REGIONS")),
+		AllowedCountries:  csv(os.Getenv("PIA_ALLOWED_COUNTRIES")),
 		ServerListURL:     env("PIA_SERVER_LIST_URL", DefaultServerListURL),
 		TokenURL:          env("PIA_TOKEN_URL", DefaultTokenURL),
 		PublicIPURL:       env("PIA_PUBLIC_IP_URL", DefaultPublicIPURL),
@@ -66,6 +69,11 @@ func load(requireCredentials bool) (Config, error) {
 		Interface:         env("PIA_TUNNEL_INTERFACE", "tun0"),
 	}
 	var err error
+	portForwarding, err := boolean("PIA_PORT_FORWARDING", true)
+	if err != nil {
+		return Config{}, err
+	}
+	c.DisablePortForwarding = !portForwarding
 	if c.AllowedSubnets, err = prefixes(csv(os.Getenv("PIA_ALLOWED_SUBNETS"))); err != nil {
 		return Config{}, err
 	}
@@ -136,6 +144,11 @@ func (c Config) Validate() error {
 	for _, endpoint := range []string{c.ServerListURL, c.TokenURL, c.PublicIPURL} {
 		if err := validateHTTPS(endpoint); err != nil {
 			return err
+		}
+	}
+	for _, country := range c.AllowedCountries {
+		if len(country) != 2 || country[0] < 'A' || country[0] > 'Z' || country[1] < 'A' || country[1] > 'Z' {
+			return errors.New("PIA_ALLOWED_COUNTRIES must contain uppercase ISO alpha-2 codes")
 		}
 	}
 	if !filepath.IsAbs(c.CACertPath) || !filepath.IsAbs(c.RuntimeDir) || filepath.Clean(c.RuntimeDir) == "/" || !filepath.IsAbs(c.GluetunEntrypoint) {
@@ -214,6 +227,18 @@ func duration(key string, def time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("%s must be a duration", key)
 	}
 	return d, nil
+}
+
+func boolean(key string, def bool) (bool, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return def, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean", key)
+	}
+	return parsed, nil
 }
 
 func validateHTTPS(value string) error {
