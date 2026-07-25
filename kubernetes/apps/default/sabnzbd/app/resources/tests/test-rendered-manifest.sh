@@ -61,6 +61,7 @@ jq -e --arg image "${expected_runtime_image}" '
   ($pod.containers[] | select(.name == "gluetun") | .securityContext.capabilities.drop == ["ALL"]) and
   ($pod.containers[] | select(.name == "gluetun") | .livenessProbe.exec.command == ["/usr/local/bin/pia-runtime", "healthcheck"]) and
   ($pod.containers[] | select(.name == "gluetun") | .readinessProbe.exec.command == ["/usr/local/bin/pia-runtime", "readycheck"]) and
+  ($pod.containers[] | select(.name == "gluetun") | [ .volumeMounts[].name ] | any(. == "config" or . == "media" or . == "unprocessed") | not) and
 
   ($pod.containers | map(select(.name == "pia-port-forward" or .name == "port-sync")) | length == 0) and
   ($pod.volumes[] | select(.name == "pia-runtime") | .emptyDir.medium == "Memory") and

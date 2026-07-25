@@ -181,17 +181,31 @@ spec:
               - path: /run/pia
       config:
         existingClaim: sabnzbd
+        advancedMounts:
+          sabnzbd:
+            app:
+              - path: /config
       media:
         type: nfs
         server: storage.cooney.site
         path: /mnt/bytebarn/media
-        globalMounts:
-          - path: /media
+        advancedMounts:
+          sabnzbd:
+            app:
+              - path: /media
       unprocessed:
         type: nfs
         server: storage.cooney.site
         path: /mnt/bytebarn/unprocessed
-        globalMounts:
-          - path: /unprocessed
+        advancedMounts:
+          sabnzbd:
+            app:
+              - path: /unprocessed
       tmp:
         type: emptyDir
+        advancedMounts:
+          sabnzbd:
+            app:
+              - path: /tmp
+            gluetun:
+              - path: /tmp
