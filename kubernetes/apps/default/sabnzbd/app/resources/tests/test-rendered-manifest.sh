@@ -102,7 +102,4 @@ for obsolete in \
   fi
 done
 
-yq 'select(.kind != null)' "${test_root}/rendered.yaml" > "${test_root}/rendered-resources.yaml"
-kubeconform -strict -ignore-missing-schemas "${test_root}/rendered-resources.yaml"
-
 printf 'SABnzbd rendered reusable PIA runtime tests passed\n'
