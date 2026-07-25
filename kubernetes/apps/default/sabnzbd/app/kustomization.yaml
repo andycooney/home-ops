@@ -6,4 +6,3 @@ resources:
   - ./externalsecret-vpn.yaml
   - ./helmrelease.yaml
   - ./ocirepository.yaml
-  - ./externalsecret-wg.yaml

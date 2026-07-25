@@ -29,6 +29,10 @@ sh -n kubernetes/apps/default/qbittorrent/app/resources/port-sync.sh
 bash -n kubernetes/apps/default/qbittorrent/app/resources/tests/test-runtime-scripts.sh
 kubernetes/apps/default/qbittorrent/app/resources/tests/test-runtime-scripts.sh
 
+section "SABnzbd reusable PIA runtime integration"
+bash -n kubernetes/apps/default/sabnzbd/app/resources/tests/test-rendered-manifest.sh
+kubernetes/apps/default/sabnzbd/app/resources/tests/test-rendered-manifest.sh
+
 section "VolSync snapshot output parser"
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/tests/test_volsync_snapshot_log.py
 
