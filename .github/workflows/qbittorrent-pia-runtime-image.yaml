@@ -139,7 +139,7 @@ jobs:
           test "$(jq -r '.[0].Config.Labels["org.opencontainers.image.revision"]' <<<"${INSPECT}")" = "${{ steps.revision.outputs.revision }}"
 
       - name: Generate SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: ${{ env.IMAGE_NAME }}:pr-validation
           format: spdx-json
